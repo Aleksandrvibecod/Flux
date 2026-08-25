@@ -1,0 +1,14 @@
+{
+  "name": "flux-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/bot.js",
+    "start": "node src/bot.js"
+  },
+  "dependencies": {
+    "grammy": "^1.25.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2"
+  }
+}

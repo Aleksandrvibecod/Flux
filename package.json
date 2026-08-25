@@ -1,0 +1,11 @@
+{
+  "name": "flux-monorepo",
+  "private": true,
+  "workspaces": ["backend", "bot", "miniapp"],
+  "scripts": {
+    "dev:backend": "npm --workspace=backend run dev",
+    "dev:bot": "npm --workspace=bot run dev",
+    "dev:miniapp": "npm --workspace=miniapp run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:bot\" \"npm run dev:miniapp\""
+  }
+}
