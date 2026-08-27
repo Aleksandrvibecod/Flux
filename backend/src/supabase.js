@@ -26,6 +26,19 @@ export async function canUseVoice(user) {
     return true;
   }
   return (user.voice_used_today || 0) < 2;
+export async function canUseMessage(user) {
+  if (user.is_premium) return true;
+  const today = new Date().toISOString().slice(0,10);
+  if (user.message_limit_date !== today) {
+    await supabase.from('users').update({ message_used_today: 0, message_limit_date: today }).eq('id', user.id);
+    return true;
+  }
+  return (user.message_used_today || 0) < 5;
+}
+export async function incMessage(user) {
+  if (user.is_premium) return;
+  await supabase.from('users').update({ message_used_today: (user.message_used_today||0)+1 }).eq('id', user.id);
+}
 }
 export async function incVoice(user) {
   if (user.is_premium) return;
