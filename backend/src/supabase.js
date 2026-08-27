@@ -1,40 +1,26 @@
-import { createClient } from '@supabase/supabase-js';
-import 'dotenv/config';
+import { supabase, getOrCreateUser, canUseVoice, incVoice, canUseMessage, incMessage } from './supabase.js';
 
-export const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY // service_role, обходит RLS
-);
+// ...
 
-// helper: получить или создать юзера по telegram_id
-export async function getOrCreateUser(telegram_id, { username, first_name } = {}) {
-  let { data } = await supabase.from('users').select('*').eq('telegram_id', telegram_id).single();
-  if (data) return data;
-  const { data: created, error } = await supabase.from('users').insert({
-    telegram_id, username, first_name
-  }).select().single();
-  if (error) throw error;
-  return created;
-}
+app.post('/parse', async (req, reply) => {
+  const telegramId = req.telegramId;
+  if (!telegramId) return reply.code(401).send({ error: 'no telegram_id' });
+  const user = await getOrCreateUser(telegramId, {});
 
-// freemium проверки
-export async function canUseVoice(user) {
-  if (user.is_premium) return true;
-  const today = new Date().toISOString().slice(0,10);
-  if (user.voice_limit_date !== today) {
-    await supabase.from('users').update({ voice_used_today: 0, voice_limit_date: today }).eq('id', user.id);
-    return true;
+  // лимиты: free 2 голоса + 5 текстов, premium безлимит
+  const isAudio = req.isMultipart();
+  if (isAudio) {
+    const ok = await canUseVoice(user);
+    if (!ok) return reply.code(403).send({ error: 'voice limit 2/day, need premium' });
+  } else {
+    const ok = await canUseMessage(user);
+    if (!ok) return reply.code(403).send({ error: 'message limit 5/day, need premium' });
   }
-  return (user.voice_used_today || 0) < 2;
-}
 
-export async function canUseMessage(user) {
-  if (user.is_premium) return true;
-  const today = new Date().toISOString().slice(0,10);
-  if (user.message_limit_date !== today) {
-    await supabase.from('users').update({ message_used_today: 0, message_limit_date: today }).eq('id', user.id);
-    return true;
-  }
+  // ... дальше как было
+  const parsed = await parseWithGemini({ text, audioBase64, audioMime });
+  if (isAudio) await incVoice(user);
+  else await incMessage(user);  }
   return (user.message_used_today || 0) < 5;
 }
 
