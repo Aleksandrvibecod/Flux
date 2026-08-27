@@ -100,8 +100,8 @@ export default function App(){
 
       {tab==='home' && (
         <div className="space-y-4">
-          <div className="glass p-5">
-            <p className="text-sm opacity-60">Баланс</p>
+          <div onClick={()=>setTab('tracker')} className="glass p-5 cursor-pointer active:scale-[0.98] transition hover:bg-white/10">
+            <p className="text-sm opacity-60">Баланс — нажми для истории →</p>
             <p className="text-3xl font-black">{balance.toLocaleString('ru-RU')} ₽</p>
             <div className="mt-4 h-20 flex gap-1.5 items-end">
               {last7Expenses.map((v,i)=>{
@@ -121,8 +121,8 @@ export default function App(){
             <p className="text-[10px] opacity-40 mt-1">{last7Expenses.some(v=>v>0) ? `макс ${Math.max(...last7Expenses)} ₽ за день` : 'нет расходов за 7 дней — скажи "потратил 500 на обед"'}</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="glass p-4"><p className="text-xs opacity-60">Калории сегодня</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p></div>
-            <div className="glass p-4"><p className="text-xs opacity-60">Задач</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p></div>
+            <div onClick={()=>setTab('calories')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Калории сегодня →</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p><p className="text-[10px] opacity-40 mt-1">{data.calories?.length||0} блюд</p></div>
+            <div onClick={()=>setTab('tasks')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Задач →</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p><p className="text-[10px] opacity-40 mt-1">нажми для списка</p></div>
           </div>
           <button onClick={()=>{ setTab('voice'); setTimeout(()=>{ if(!isRecording && !sending) startVoice() },150)}} className="w-full btn-gradient py-4 font-bold text-lg">🎙 Голосовой ввод</button>
         </div>
@@ -130,11 +130,23 @@ export default function App(){
 
       {tab==='tracker' && (
         <div className="space-y-3">
-          <h2 className="font-bold">История</h2>
-          {data.transactions?.slice(0,10).map(t=>(
+          <div className="flex items-center gap-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">История расходов/доходов</h2></div>
+          {(data.transactions?.length||0)===0 ? <p className="text-sm opacity-60 glass p-4 text-center">Пока пусто — скажи “потратил 500 на обед”</p> : data.transactions.slice(0,20).map(t=>(
             <div key={t.id} className="glass p-3 flex justify-between">
-              <div><p className="font-semibold">{t.category}</p><p className="text-xs opacity-60">{t.note}</p></div>
+              <div><p className="font-semibold">{t.category}</p><p className="text-xs opacity-60">{t.note} • {new Date(t.created_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'})}</p></div>
               <p className={`font-black ${t.type==='expense'?'text-red-400':'text-green-400'}`}>{t.type==='expense'?'-':'+'}{t.amount}₽</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==='calories' && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">История калорий</h2></div>
+          {(data.calories?.length||0)===0 ? <p className="text-sm opacity-60 glass p-4 text-center">Пока пусто — скажи “съел 2 яйца”</p> : data.calories.slice(0,20).map(c=>(
+            <div key={c.id} className="glass p-3 flex justify-between">
+              <div><p className="font-semibold">{c.dish}</p><p className="text-xs opacity-60">{new Date(c.created_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'})} • Б:{c.protein||0} Ж:{c.fat||0} У:{c.carbs||0}</p></div>
+              <p className="font-black text-orange-400">{c.kcal} ккал</p>
             </div>
           ))}
         </div>
@@ -170,9 +182,14 @@ export default function App(){
 
       {tab==='tasks' && (
         <div className="space-y-2">
-          {data.notes?.map(n=>(
-            <div key={n.id} className="glass p-3"><p className="font-semibold">{n.title}</p><p className="text-xs opacity-60">{n.kind}</p></div>
+          <div className="flex items-center gap-2 mb-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">Актуальные задачи</h2></div>
+          {(data.notes?.filter(n=>n.kind==='task')?.length||0)===0 ? <p className="text-sm opacity-60 glass p-4 text-center">Задач нет — скажи “напомни завтра в 10 позвонить”</p> : data.notes.filter(n=>n.kind==='task').slice(0,20).map(n=>(
+            <div key={n.id} className="glass p-3 flex justify-between items-center">
+              <div><p className="font-semibold">{n.title}</p><p className="text-xs opacity-60">{n.content||n.kind} • {new Date(n.created_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'})}</p></div>
+              <span className={`text-xs px-2 py-1 rounded-full ${n.is_done?'bg-green-500/20 text-green-400':'bg-white/10'}`}>{n.is_done?'✓':'•'}</span>
+            </div>
           ))}
+          {data.notes?.filter(n=>n.kind!=='task').length>0 && <><h3 className="text-xs opacity-60 mt-3">Заметки/идеи</h3>{data.notes.filter(n=>n.kind!=='task').slice(0,10).map(n=><div key={n.id} className="glass p-3"><p className="font-semibold">{n.title}</p><p className="text-xs opacity-60">{n.kind}</p></div>)}</>}
         </div>
       )}
 
