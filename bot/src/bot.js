@@ -1,9 +1,14 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import 'dotenv/config';
 
-const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-const BACKEND = process.env.BACKEND_URL || 'http://localhost:3000';
-const MINIAPP_URL = process.env.MINIAPP_URL || 'https://your-vercel.app';
+const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+if (!token) {
+  console.error('❌ Нет TELEGRAM_BOT_TOKEN! Добавь его в Railway -> bot -> Variables');
+  // не падаем сразу, чтобы видеть логи
+}
+const bot = new Bot(token || '123456:TEST_TOKEN_DO_NOT_USE');
+const BACKEND = (process.env.BACKEND_URL || 'http://localhost:3000').trim();
+const MINIAPP_URL = (process.env.MINIAPP_URL || 'https://your-vercel.app').trim();
 
 // /start
 bot.command('start', async (ctx) => {
