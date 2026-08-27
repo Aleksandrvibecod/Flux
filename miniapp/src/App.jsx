@@ -5,11 +5,17 @@ const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'
 export default function App(){
   const [tab, setTab] = useState('home')
   const [data, setData] = useState({ transactions:[], calories:[], notes:[] })
-  const tgId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 12345
+  const getTgId = ()=> {
+    const w = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
+    if (w) return w
+    const p = new URLSearchParams(window.location.search)
+    return Number(p.get('telegram_id') || p.get('tgId') || 0) || 12345
+  }
+  const tgId = getTgId()
 
   useEffect(()=>{
-    fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': tgId } })
-      .then(r=>r.json()).then(setData).catch(()=>{})
+    fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } })
+      .then(r=>r.json()).then(d=>{ console.log('history',d); setData(d) }).catch(e=>console.warn('history fail',e))
   },[])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
@@ -61,24 +67,23 @@ export default function App(){
   }
   useEffect(()=>()=>clearInterval(timerRef.current),[])
 
-  // динамика столбиков: сумма расходов за последние 7 дней -> высота
+   // динамика столбиков: сумма расходов за последние 7 дней -> высота (МСК)
+  const moscowDateStr = (offset=0)=> new Date(Date.now()+offset*86400000).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
+  const toMoscowDate = (iso)=> new Date(iso).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
   const last7Expenses = React.useMemo(()=>{
-    const days = Array.from({length:7}, (_,k)=>{
-      const d = new Date(); d.setDate(d.getDate()-(6-k)); d.setHours(0,0,0,0)
-      return d
-    })
-    return days.map(d=>{
-      const key = d.toISOString().slice(0,10)
+    return Array.from({length:7},(_,k)=>{
+      const offset = k-6 // -6 ... 0
+      const key = moscowDateStr(offset)
       return (data.transactions||[])
-        .filter(t=> t.type==='expense' && t.created_at?.slice(0,10)===key)
+        .filter(t=> t.type==='expense' && toMoscowDate(t.created_at)===key)
         .reduce((s,t)=> s + Number(t.amount||0), 0)
     })
   },[data.transactions])
   const maxExpense = Math.max(...last7Expenses, 1)
   const dayLabels = React.useMemo(()=>{
-    const fmt = new Intl.DateTimeFormat('ru-RU',{weekday:'short'})
+    const fmt = new Intl.DateTimeFormat('ru-RU',{weekday:'short', timeZone:'Europe/Moscow'})
     return Array.from({length:7},(_,k)=>{
-      const d=new Date(); d.setDate(d.getDate()-(6-k))
+      const d=new Date(); d.setDate(d.getDate()+(k-6))
       return fmt.format(d)
     })
   },[])
