@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 
 const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'
 
@@ -13,6 +13,53 @@ export default function App(){
   },[])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
+  const refresh = ()=> fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': tgId } }).then(r=>r.json()).then(setData).catch(()=>{})
+
+  // голос прямо из миниапа — без возврата в чат
+  const [isRecording, setIsRecording] = useState(false)
+  const [seconds, setSeconds] = useState(0)
+  const [sending, setSending] = useState(false)
+  const [voiceResult, setVoiceResult] = useState(null)
+  const [voiceError, setVoiceError] = useState(null)
+  const mediaRef = useRef(null)
+  const chunksRef = useRef([])
+  const timerRef = useRef(null)
+
+  const startVoice = async ()=>{
+    setVoiceError(null); setVoiceResult(null)
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' })
+      mediaRef.current = mr; chunksRef.current=[]
+      mr.ondataavailable = e=>{ if(e.data.size>0) chunksRef.current.push(e.data) }
+      mr.onstop = async ()=>{
+        stream.getTracks().forEach(t=>t.stop())
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType })
+        if (!blob.size) return
+        setSending(true)
+        try{
+          const fd = new FormData(); fd.append('file', blob, 'voice.webm')
+          window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium')
+          const res = await fetch(`${API}/parse`, { method:'POST', headers:{ 'x-telegram-id': String(tgId) }, body: fd }).then(r=>r.json())
+          if (res.error) throw new Error(res.error)
+          setVoiceResult(res.parsed)
+          await refresh()
+          window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
+        }catch(e){ setVoiceError(e.message); window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error') }
+        finally{ setSending(false) }
+      }
+      mr.start(); setIsRecording(true); setSeconds(0)
+      timerRef.current = setInterval(()=>setSeconds(s=>s+1),1000)
+      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('heavy')
+    }catch(e){
+      setVoiceError(e.name==='NotAllowedError' ? 'Разреши микрофон в браузере' : e.message)
+    }
+  }
+  const stopVoice = ()=>{
+    if (mediaRef.current?.state==='recording') mediaRef.current.stop()
+    setIsRecording(false); clearInterval(timerRef.current)
+  }
+  useEffect(()=>()=>clearInterval(timerRef.current),[])
 
   // динамика столбиков: сумма расходов за последние 7 дней -> высота
   const last7Expenses = React.useMemo(()=>{
@@ -72,7 +119,7 @@ export default function App(){
             <div className="glass p-4"><p className="text-xs opacity-60">Калории сегодня</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p></div>
             <div className="glass p-4"><p className="text-xs opacity-60">Задач</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p></div>
           </div>
-          <button onClick={()=>setTab('voice')} className="w-full btn-gradient py-4 font-bold text-lg">🎙 Голосовой ввод</button>
+          <button onClick={()=>{ setTab('voice'); setTimeout(()=>{ if(!isRecording && !sending) startVoice() },150)}} className="w-full btn-gradient py-4 font-bold text-lg">🎙 Голосовой ввод</button>
         </div>
       )}
 
@@ -90,9 +137,29 @@ export default function App(){
 
       {tab==='voice' && (
         <div className="glass p-6 text-center space-y-4">
-          <p className="font-bold">Скажи голосом боту</p>
+          <p className="font-bold">{isRecording ? '🎙 Слушаю...' : sending ? '⏳ Отправляю...' : 'Голосовой ввод прямо здесь'}</p>
           <p className="text-sm opacity-70">“потратил 500 на обед” / “съел 2 яйца” / “напомни завтра в 10”</p>
-          <p className="text-xs opacity-50">Открой бота в Telegram и зажми 🎙</p>
+
+          {!isRecording && !sending ? (
+            <button onClick={startVoice} className="w-28 h-28 mx-auto rounded-full btn-gradient flex items-center justify-center text-4xl active:scale-95 transition">🎙</button>
+          ) : isRecording ? (
+            <button onClick={stopVoice} className="w-28 h-28 mx-auto rounded-full bg-red-500 flex items-center justify-center text-4xl animate-pulse">⏹</button>
+          ) : (
+            <div className="w-28 h-28 mx-auto rounded-full bg-white/10 flex items-center justify-center">⏳</div>
+          )}
+
+          {isRecording && <p className="text-2xl font-mono font-bold">{String(Math.floor(seconds/60)).padStart(2,'0')}:{String(seconds%60).padStart(2,'0')}</p>}
+          {sending && <p className="text-xs opacity-60">Распознаю через Whisper...</p>}
+
+          {voiceResult && (
+            <div className="glass p-3 text-left text-sm">
+              <p className="font-bold">✅ Распознал:</p>
+              <pre className="whitespace-pre-wrap text-xs opacity-80">{JSON.stringify(voiceResult,null,2)}</pre>
+              <button onClick={()=>{setVoiceResult(null); refresh(); setTab('home')}} className="mt-2 w-full btn-gradient py-2 rounded-xl">OK, к балансу</button>
+            </div>
+          )}
+          {voiceError && <p className="text-sm text-red-400">⚠️ {voiceError}</p>}
+          <p className="text-xs opacity-40">Работает без возврата в чат — жми 🎙, говори, жми ⏹. Чат-бот тоже остался как запасной.</p>
         </div>
       )}
 
