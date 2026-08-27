@@ -70,6 +70,26 @@ create table if not exists subscriptions (
   created_at timestamptz default now()
 );
 
+-- Streaks & Bonuses (огоньки на главном)
+create table if not exists streaks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references users(id) on delete cascade not null,
+  habit text not null, -- например no_coffee_500
+  streak int default 0, -- дней подряд
+  best_streak int default 0,
+  last_date date,
+  total_bonus int default 0, -- накоплено бонусов
+  updated_at timestamptz default now(),
+  unique(user_id, habit)
+);
+create table if not exists bonuses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references users(id) on delete cascade not null,
+  amount int not null, -- +50, -100
+  reason text, -- streak_3, receipt_scan
+  created_at timestamptz default now()
+);
+
 -- Включи RLS и разреши всё для service_role (backend использует service_key)
 alter table users enable row level security;
 alter table transactions enable row level security;
@@ -77,6 +97,8 @@ alter table calories enable row level security;
 alter table notes enable row level security;
 alter table reminders enable row level security;
 alter table subscriptions enable row level security;
+alter table streaks enable row level security;
+alter table bonuses enable row level security;
 
 -- Политики для anon (через backend — service_role обходит RLS, но для Mini App через anon нужно)
 create policy "allow all for anon" on users for all using (true) with check (true);
@@ -85,3 +107,10 @@ create policy "allow all for anon" on calories for all using (true) with check (
 create policy "allow all for anon" on notes for all using (true) with check (true);
 create policy "allow all for anon" on reminders for all using (true) with check (true);
 create policy "allow all for anon" on subscriptions for all using (true) with check (true);
+create policy "allow all for anon" on streaks for all using (true) with check (true);
+create policy "allow all for anon" on bonuses for all using (true) with check (true);
+
+-- докидываем колонки если база уже создана
+alter table users add column if not exists message_used_today int default 0;
+alter table users add column if not exists message_limit_date date default current_date;
+alter table users add column if not exists bonus_balance int default 0;

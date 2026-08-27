@@ -4,7 +4,40 @@ import multipart from '@fastify/multipart';
 import cron from 'node-cron';
 import 'dotenv/config';
 import { supabase, getOrCreateUser, canUseVoice, incVoice, canUseMessage, incMessage } from './supabase.js';
-import { parseWithGemini, generateInsights } from './gemini.js';
+import { parseWithGemini, generateInsights, parseReceiptImage, parseFoodImage } from './gemini.js';
+
+async function handleCoffeeStreak(user) {
+  try {
+    const today = moscowDayRange(0);
+    // был ли кофе сегодня?
+    const { data: coffeeToday } = await supabase.from('transactions').select('id').eq('user_id', user.id).eq('type','expense').ilike('category','%кофе%').gte('created_at', today.start).lte('created_at', today.end).limit(1);
+    const hadCoffee = (coffeeToday?.length||0) > 0;
+    const { data: st } = await supabase.from('streaks').select('*').eq('user_id', user.id).eq('habit','no_coffee_500').maybeSingle();
+    let streak = st?.streak || 0;
+    let best = st?.best_streak || 0;
+    let bonus = 0;
+    const lastDate = st?.last_date;
+    const todayStr = moscowDateStr(0);
+    if (hadCoffee) {
+      streak = 0;
+    } else {
+      // если уже засчитали сегодня — не дублируем
+      if (lastDate !== todayStr) {
+        streak = (lastDate === moscowDateStr(-1) ? streak : 0) + 1;
+        if (streak >= 3) bonus = 150; // бонус за 3 дня
+        else if (streak >=1) bonus = 50;
+        best = Math.max(best, streak);
+      }
+    }
+    if (st?.id) await supabase.from('streaks').update({ streak, best_streak: best, last_date: todayStr, total_bonus: (st.total_bonus||0)+bonus, updated_at: new Date().toISOString() }).eq('id', st.id);
+    else await supabase.from('streaks').insert({ user_id: user.id, habit:'no_coffee_500', streak, best_streak: best, last_date: todayStr, total_bonus: bonus });
+    if (bonus) {
+      await supabase.from('bonuses').insert({ user_id: user.id, amount: bonus, reason: `streak_${streak}` });
+      await supabase.from('users').update({ bonus_balance: (user.bonus_balance||0)+bonus }).eq('id', user.id);
+    }
+    return { streak, best, bonus };
+  } catch(e){ console.warn('streak fail',e.message); return {streak:0} }
+}
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
@@ -38,41 +71,79 @@ app.post('/parse', async (req, reply) => {
   let text = '';
   let audioBase64 = null;
   let audioMime = 'audio/ogg';
+  let imageBase64 = null;
+  let imageMime = null;
+  let isImage = false;
   if (isAudio) {
     const data = await req.file();
+    if (!data) return reply.code(400).send({ error: 'no file' });
     const buf = await data.toBuffer();
-    audioBase64 = buf.toString('base64');
-    audioMime = data.mimetype || 'audio/ogg';
-    text = data.fields?.text?.value || '';
+    const mime = data.mimetype || 'application/octet-stream';
+    if (mime.startsWith('image/')) {
+      isImage = true;
+      imageBase64 = buf.toString('base64');
+      imageMime = mime;
+      text = data.fields?.text?.value || data.fields?.type?.value || '';
+    } else {
+      audioBase64 = buf.toString('base64');
+      audioMime = mime;
+      text = data.fields?.text?.value || '';
+    }
   } else {
     text = req.body?.text || '';
+    // поддержка base64 image в JSON (миниап шлет {imageBase64, mime})
+    if (req.body?.imageBase64) { imageBase64 = req.body.imageBase64; imageMime = req.body.mime || 'image/jpeg'; isImage = true; }
   }
 
   let parsed;
   try {
-    parsed = await parseWithGemini({ text, audioBase64, audioMime });
+    if (isImage) {
+      const hint = (text || '').toLowerCase();
+      if (hint.includes('чек') || hint.includes('receipt')) parsed = await parseReceiptImage({ imageBase64, mime: imageMime });
+      else if (hint.includes('еда') || hint.includes('ккал') || hint.includes('food')) parsed = await parseFoodImage({ imageBase64, mime: imageMime });
+      else {
+        // авто: пробуем чек, если total>0 считаем чеком, иначе еда
+        const r = await parseReceiptImage({ imageBase64, mime: imageMime });
+        if (r.type==='receipt' && r.total) parsed = r;
+        else parsed = await parseFoodImage({ imageBase64, mime: imageMime });
+      }
+    } else {
+      parsed = await parseWithGemini({ text, audioBase64, audioMime });
+    }
   } catch (e) {
     const raw = e.error?.error?.message || e.error?.message || e.message || String(e);
     const details = JSON.stringify(e.error || raw).slice(0,800);
-    app.log.error({ err: e, raw, telegramId, audioMime, hasAudio: !!audioBase64 }, 'parseWithGemini failed');
+    app.log.error({ err: e, raw, telegramId, audioMime, hasAudio: !!audioBase64, isImage }, 'parseWithGemini failed');
     return reply.code(400).send({ error: `AI error: ${raw}`, details, provider: e.error?.error?.metadata?.provider_name || null });
   }
-  if (isAudio) await incVoice(user);
-  else await incMessage(user);
+  if (!isImage) {
+    if (isAudio) await incVoice(user);
+    else await incMessage(user);
+  }
 
   // запись по типу
   let saved = null;
+  let bonusInfo = null;
   try {
     if (parsed.type === 'expense' || parsed.type === 'income') {
       const { data } = await supabase.from('transactions').insert({
         user_id: user.id, type: parsed.type, amount: parsed.amount, category: parsed.category || 'прочее', note: parsed.note || text
       }).select().single();
       saved = data;
+      bonusInfo = await handleCoffeeStreak(user);
     } else if (parsed.type === 'calories') {
       const { data } = await supabase.from('calories').insert({
         user_id: user.id, dish: parsed.dish, kcal: parsed.kcal, protein: parsed.protein||0, fat: parsed.fat||0, carbs: parsed.carbs||0
       }).select().single();
       saved = data;
+    } else if (parsed.type === 'receipt') {
+      // чек: создаем несколько транзакций
+      const items = parsed.items || [];
+      for (const it of items.slice(0,10)) {
+        await supabase.from('transactions').insert({ user_id: user.id, type:'expense', amount: Number(it.amount)||0, category: it.name?.slice(0,32) || 'прочее', note: `чек ${parsed.shop||''}`.trim() });
+      }
+      saved = { items, total: parsed.total, shop: parsed.shop };
+      bonusInfo = await handleCoffeeStreak(user);
     } else if (parsed.type === 'note' || parsed.type === 'task' || parsed.type === 'idea') {
       const kind = parsed.kind || 'note';
       const { data } = await supabase.from('notes').insert({
@@ -87,7 +158,7 @@ app.post('/parse', async (req, reply) => {
     }
   } catch (e) { app.log.error(e); }
 
-  return { parsed, saved, premium: user.is_premium };
+  return { parsed, saved, premium: user.is_premium, streak: bonusInfo };
 });
 
 // GET /history — для Mini App
@@ -101,7 +172,10 @@ app.get('/history', async (req, reply) => {
     supabase.from('calories').select('*').eq('user_id', user.id).gte('created_at', since.toISOString()).order('created_at', {ascending:false}).limit(50),
     supabase.from('notes').select('*').eq('user_id', user.id).order('created_at', {ascending:false}).limit(50),
   ]);
-  return { transactions: tx.data, calories: cal.data, notes: notes.data, is_premium: user.is_premium };
+  // streaks & bonuses
+  const { data: streaks } = await supabase.from('streaks').select('*').eq('user_id', user.id);
+  const { data: bonuses } = await supabase.from('bonuses').select('*').eq('user_id', user.id).order('created_at',{ascending:false}).limit(10);
+  return { transactions: tx.data, calories: cal.data, notes: notes.data, is_premium: user.is_premium, streaks, bonuses, bonus_balance: user.bonus_balance||0 };
 });
 
 app.get('/analytics', async (req) => {
@@ -314,6 +388,16 @@ cron.schedule('0 * * * *', async ()=>{
     if (expired.length) app.log.info(`expired ${expired.length} subscriptions`);
   }catch(e){ app.log.error(e); }
 });
+
+// cron — стрик кофе: каждый день 23:55 МСК проверяем не покупал ли кофе
+cron.schedule('55 23 * * *', async ()=>{
+  try{
+    const { data: users } = await supabase.from('users').select('id,bonus_balance').limit(500);
+    if (!users?.length) return;
+    for (const u of users) await handleCoffeeStreak(u);
+    app.log.info(`coffee streak checked for ${users.length} users`);
+  }catch(e){ app.log.error(e); }
+}, { timezone: 'Europe/Moscow' });
 
 // cron — каждый день в 22:00 МСК сводка по расходам + дела на завтра
 cron.schedule('0 22 * * *', async () => {

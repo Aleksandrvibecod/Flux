@@ -92,6 +92,46 @@ export async function parseWithGemini({ text, audioBase64, audioMime = 'audio/og
   try { return JSON.parse(raw); } catch { return { type: 'note', kind: 'note', title: text||'заметка', content: raw }; }
 }
 
+export async function parseReceiptImage({ imageBase64, mime = 'image/jpeg' }) {
+  const system = `Ты — OCR парсер чеков. Верни ТОЛЬКО JSON. Формат: {"type":"receipt","items":[{"name":string,"amount":number}],"total":number,"shop":string}
+Если чек не читается — {"type":"note","kind":"note","title":"чек не распознан","content":""}`;
+  const res = await client.chat.completions.create({
+    model: GEMINI_MODEL,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: [
+        { type: 'text', text: 'Распознай чек, вытащи все позиции и итог.' },
+        { type: 'image_url', image_url: { url: `data:${mime};base64,${imageBase64}` } }
+      ] }
+    ],
+    temperature: 0.1,
+    max_tokens: 1000,
+  });
+  let raw = res.choices[0]?.message?.content?.trim() || '{}';
+  const m = raw.match(/\{[\s\S]*\}/); if (m) raw = m[0];
+  try { return JSON.parse(raw); } catch { return { type:'note', kind:'note', title:'чек', content: raw }; }
+}
+
+export async function parseFoodImage({ imageBase64, mime = 'image/jpeg' }) {
+  const system = `Ты — диетолог. По фото блюда оцени КБЖУ. Верни ТОЛЬКО JSON: {"type":"calories","dish":string,"kcal":number,"protein":number,"fat":number,"carbs":number,"weight":number}
+Если не еда — {"type":"note","kind":"note","title":"не еда","content":""}`;
+  const res = await client.chat.completions.create({
+    model: GEMINI_MODEL,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: [
+        { type: 'text', text: 'Оцени блюдо на фото, дай КБЖУ.' },
+        { type: 'image_url', image_url: { url: `data:${mime};base64,${imageBase64}` } }
+      ] }
+    ],
+    temperature: 0.3,
+    max_tokens: 600,
+  });
+  let raw = res.choices[0]?.message?.content?.trim() || '{}';
+  const m = raw.match(/\{[\s\S]*\}/); if (m) raw = m[0];
+  try { return JSON.parse(raw); } catch { return { type:'note', kind:'note', title:'еда', content: raw }; }
+}
+
 export async function generateInsights({ transactions, calories, notes }) {
   const prompt = `На основе данных за 7 дней дай 3 коротких инсайта (до 15 слов каждый) в JSON {"insights":[string]}.
 Транзакции: ${JSON.stringify(transactions.slice(0,30))}

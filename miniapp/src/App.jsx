@@ -90,6 +90,21 @@ export default function App(){
     setIsRecording(false); clearInterval(timerRef.current)
   }
   useEffect(()=>()=>clearInterval(timerRef.current),[])
+  const receiptRef = useRef(null), foodRef = useRef(null)
+  const [photoSending, setPhotoSending] = useState(false)
+  const [photoResult, setPhotoResult] = useState(null)
+  const handlePhoto = async (file, hint)=>{
+    if (!file) return
+    setPhotoSending(true); setPhotoResult(null)
+    try{
+      const fd = new FormData(); fd.append('file', file, file.name); fd.append('text', hint)
+      const res = await fetch(`${API}/parse`, { method:'POST', headers:{'x-telegram-id': String(tgId)}, body: fd }).then(r=>r.json())
+      if (res.error) throw new Error(res.error)
+      setPhotoResult(res); await refresh()
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
+    }catch(e){ setPhotoResult({error:e.message}); window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error') }
+    finally{ setPhotoSending(false) }
+  }
 
    // динамика столбиков: сумма расходов за последние 7 дней -> высота (МСК)
   const moscowDateStr = (offset=0)=> new Date(Date.now()+offset*86400000).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
@@ -118,8 +133,18 @@ export default function App(){
       <div className="gradient-blob" style={{bottom:100, right:-100, background: 'radial-gradient(circle, #A855F7 0%, transparent 70%)'}} />
       
       <header className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-black tracking-tight">FLUX</h1>
-        <span className="text-xs px-3 py-1 rounded-full glass">● Online</span>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-black tracking-tight">FLUX</h1>
+          {(() => {
+            const s = data.streaks?.find(x=>x.habit==='no_coffee_500')?.streak || 0;
+            if (!s) return null;
+            return <span className="text-sm px-2 py-0.5 rounded-full glass flex items-center gap-1" title={`${s} дней без кофе`}>{'🔥'.repeat(Math.min(s,5))} {s}д</span>
+          })()}
+        </div>
+        <div className="flex items-center gap-2">
+          {data.bonus_balance ? <span className="text-xs px-2 py-1 rounded-full bg-[#8B5CF6]/20 text-[#C084FC] font-bold">🎁 {data.bonus_balance}</span> : null}
+          <span className="text-xs px-3 py-1 rounded-full glass">● Online</span>
+        </div>
       </header>
 
       {tab==='home' && (
@@ -148,6 +173,19 @@ export default function App(){
             <div onClick={()=>setTab('calories')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Калории сегодня →</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p><p className="text-[10px] opacity-40 mt-1">{data.calories?.length||0} блюд</p></div>
             <div onClick={()=>setTab('tasks')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Задач →</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p><p className="text-[10px] opacity-40 mt-1">нажми для списка</p></div>
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <input ref={receiptRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>handlePhoto(e.target.files[0], 'чек')} />
+            <input ref={foodRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>handlePhoto(e.target.files[0], 'еда')} />
+            <button onClick={()=>receiptRef.current?.click()} disabled={photoSending} className="glass py-3 rounded-xl text-sm font-semibold active:scale-95 transition">📸 Сканер чека</button>
+            <button onClick={()=>foodRef.current?.click()} disabled={photoSending} className="glass py-3 rounded-xl text-sm font-semibold active:scale-95 transition">🍲 Фото еды</button>
+          </div>
+          {photoSending && <p className="text-xs opacity-60 text-center">⏳ Распознаю...</p>}
+          {photoResult && (
+            <div className="glass p-3 text-xs">
+              {photoResult.error ? <p className="text-red-400">⚠️ {photoResult.error}</p> : <><p className="font-bold">✅ {photoResult.parsed?.type==='receipt' ? `Чек ${photoResult.saved?.shop||''} ${photoResult.saved?.total||''}₽` : photoResult.parsed?.dish ? `${photoResult.parsed.dish} ${photoResult.parsed.kcal} ккал` : 'Готово'}</p><pre className="whitespace-pre-wrap opacity-60 mt-1">{JSON.stringify(photoResult.parsed,null,2).slice(0,300)}</pre>{photoResult.streak?.bonus ? <p className="text-green-400 mt-1">🎁 Бонус +{photoResult.streak.bonus} за стрик 🔥{photoResult.streak.streak}д</p> : null}</>}
+              <button onClick={()=>setPhotoResult(null)} className="mt-2 w-full glass py-1 rounded-lg">OK</button>
+            </div>
+          )}
           <button onClick={()=>setTab('settings')} className="mx-auto block px-5 py-2.5 rounded-full glass text-sm font-semibold opacity-80 hover:opacity-100 active:scale-95 transition">💎 Перейти на Премиум</button>
           <p className="text-[10px] opacity-40 text-center">Безлимит голос/текст, 365д истории, сводка 22:00</p>
           <p className="text-[10px] opacity-20 text-center tracking-widest mt-1">by. P0dp1Vasn1K</p>
