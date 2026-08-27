@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import cron from 'node-cron';
 import 'dotenv/config';
-import { supabase, getOrCreateUser, canUseVoice, incVoice } from './supabase.js';
+import { supabase, getOrCreateUser, canUseVoice, incVoice, canUseMessage, incMessage } from './supabase.js';
 import { parseWithGemini, generateInsights } from './gemini.js';
 
 const app = Fastify({ logger: true });
