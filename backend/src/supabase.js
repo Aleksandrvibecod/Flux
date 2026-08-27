@@ -25,7 +25,7 @@ export async function canUseVoice(user) {
     await supabase.from('users').update({ voice_used_today: 0, voice_limit_date: today }).eq('id', user.id);
     return true;
   }
-  return (user.voice_used_today || 0) < 10;
+  return (user.voice_used_today || 0) < 2;
 }
 export async function incVoice(user) {
   if (user.is_premium) return;
