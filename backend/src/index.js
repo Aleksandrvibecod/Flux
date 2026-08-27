@@ -50,6 +50,7 @@ app.post('/parse', async (req, reply) => {
 
   const parsed = await parseWithGemini({ text, audioBase64, audioMime });
   if (isAudio) await incVoice(user);
+else await incMessage(user);
 
   // запись по типу
   let saved = null;
