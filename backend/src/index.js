@@ -202,6 +202,68 @@ async function sendDailyToAll() {
   app.log.info(`daily summary sent to ${users.length} users`);
 }
 
+// premium grant — вызывает бот после successful_payment (Stars / YooKassa)
+app.post('/premium/grant', async (req,reply)=>{
+  const tid = Number(req.body?.telegram_id || req.telegramId);
+  if (!tid) return reply.code(400).send({error:'need telegram_id'});
+  const provider = (req.body?.provider || 'telegram_stars').slice(0,32);
+  const days = Math.max(1, Math.min(365, Number(req.body?.duration_days || 30)));
+  const user = await getOrCreateUser(tid);
+  // продление: если уже есть активная подписка — добавляем к ее концу, иначе от сейчас
+  const { data: cur } = await supabase.from('subscriptions').select('expires_at').eq('user_id', user.id).eq('status','active').gt('expires_at', new Date().toISOString()).order('expires_at',{ascending:false}).limit(1).maybeSingle();
+  let base = cur?.expires_at ? new Date(cur.expires_at) : new Date();
+  if (base < new Date()) base = new Date();
+  base.setDate(base.getDate() + days);
+  const expires = base.toISOString();
+  await supabase.from('users').update({ is_premium: true }).eq('id', user.id);
+  await supabase.from('subscriptions').insert({ user_id: user.id, provider, status:'active', expires_at: expires });
+  app.log.info({telegram_id: tid, provider, days, expires}, 'premium granted');
+  return { ok:true, is_premium:true, expires_at: expires, days };
+});
+app.get('/premium/status', async (req,reply)=>{
+  const tid = Number(req.query.telegram_id || req.telegramId);
+  if (!tid) return reply.code(400).send({error:'need telegram_id'});
+  const user = await getOrCreateUser(tid);
+  const { data: sub } = await supabase.from('subscriptions').select('*').eq('user_id', user.id).eq('status','active').order('expires_at',{ascending:false}).limit(1).maybeSingle();
+  if (sub?.expires_at) {
+    const daysLeft = Math.max(0, Math.ceil((new Date(sub.expires_at) - new Date())/86400000));
+    return { is_premium: !!user.is_premium, expires_at: sub.expires_at, provider: sub.provider, days_left: daysLeft, status: sub.status };
+  }
+  return { is_premium: !!user.is_premium, expires_at: null, provider: null, days_left: 0 };
+});
+// создание Stars инвойса из миниапа: POST /premium/create-invoice {telegram_id, plan: 1m|3m|6m}
+app.post('/premium/create-invoice', async (req,reply)=>{
+  const tid = Number(req.body?.telegram_id || req.telegramId);
+  if (!tid) return reply.code(400).send({error:'need telegram_id'});
+  const plan = (req.body?.plan || '1m');
+  const plans = {
+    '1m': { amount: 250, days: 30, label: 'Premium 1 месяц', rub: '299₽' },
+    '3m': { amount: 650, days: 90, label: 'Premium 3 месяца', rub: '799₽' },
+    '6m': { amount: 1300, days: 180, label: 'Premium 6 месяцев', rub: '1599₽' },
+  };
+  const p = plans[plan] || plans['1m'];
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return reply.code(500).send({error:'no bot token on backend'});
+  const payload = `premium_${plan}_${tid}_${Date.now()}`;
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/createInvoiceLink`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: p.label,
+      description: 'Безлимит голос, вся история 365д, сводка 22:00, ИИ-аналитика',
+      payload,
+      provider_token: '',
+      currency: 'XTR',
+      prices: [{ label: p.label, amount: p.amount }],
+    }),
+  }).then(r=>r.json());
+  if (!res.ok) {
+    app.log.error({res}, 'createInvoiceLink failed');
+    return reply.code(400).send({ error: res.description || 'createInvoice failed', raw: res });
+  }
+  return { invoiceLink: res.result, plan, ...p, payload };
+});
+
 // тест руками: GET /daily-test?telegram_id=1072185171  или POST /daily-send (для админа)
 app.get('/daily-test', async (req,reply)=>{
   const id = Number(req.query.telegram_id || req.telegramId);
@@ -235,6 +297,22 @@ cron.schedule('* * * * *', async () => {
       await supabase.from('reminders').update({ is_sent: true }).eq('id', r.id);
     } catch (e) { app.log.error(e); }
   }
+});
+
+// cron — проверка просроченных подписок каждый час -> снимаем premium
+cron.schedule('0 * * * *', async ()=>{
+  try{
+    const now = new Date().toISOString();
+    const { data: expired } = await supabase.from('subscriptions').select('id,user_id').eq('status','active').lt('expires_at', now).limit(100);
+    if (!expired?.length) return;
+    for (const s of expired){
+      await supabase.from('subscriptions').update({ status:'expired' }).eq('id', s.id);
+      // если у юзера нет других активных подписок — снимаем premium
+      const { data: active } = await supabase.from('subscriptions').select('id').eq('user_id', s.user_id).eq('status','active').gt('expires_at', now).limit(1);
+      if (!active?.length) await supabase.from('users').update({ is_premium:false }).eq('id', s.user_id);
+    }
+    if (expired.length) app.log.info(`expired ${expired.length} subscriptions`);
+  }catch(e){ app.log.error(e); }
 });
 
 // cron — каждый день в 22:00 МСК сводка по расходам + дела на завтра

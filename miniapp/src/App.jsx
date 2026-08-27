@@ -12,14 +12,38 @@ export default function App(){
     return Number(p.get('telegram_id') || p.get('tgId') || 0) || 12345
   }
   const tgId = getTgId()
+  const [premium, setPremium] = useState({ is_premium:false, expires_at:null, days_left:0 })
 
   useEffect(()=>{
     fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } })
       .then(r=>r.json()).then(d=>{ console.log('history',d); setData(d) }).catch(e=>console.warn('history fail',e))
+    fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } })
+      .then(r=>r.json()).then(setPremium).catch(()=>{})
   },[])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
-  const refresh = ()=> fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': tgId } }).then(r=>r.json()).then(setData).catch(()=>{})
+  const refresh = ()=> {
+    fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': tgId } }).then(r=>r.json()).then(setData).catch(()=>{})
+    fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).then(setPremium).catch(()=>{})
+  }
+  const [paying, setPaying] = useState(null)
+  const buyPlan = async (plan)=>{
+    setPaying(plan)
+    try{
+      const res = await fetch(`${API}/premium/create-invoice`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ telegram_id: tgId, plan }) }).then(r=>r.json())
+      if (res.error) throw new Error(res.error)
+      const link = res.invoiceLink
+      if (window.Telegram?.WebApp?.openInvoice){
+        window.Telegram.WebApp.openInvoice(link, (status)=>{
+          if (status==='paid'){ setTimeout(refresh,1200); window.Telegram.WebApp.HapticFeedback?.notificationOccurred('success') }
+          else if (status==='failed') window.Telegram.WebApp.HapticFeedback?.notificationOccurred('error')
+        })
+      } else {
+        window.open(link, '_blank')
+      }
+    }catch(e){ alert('Ошибка оплаты: '+e.message) }
+    finally{ setPaying(null) }
+  }
 
   // голос прямо из миниапа — без возврата в чат
   const [isRecording, setIsRecording] = useState(false)
@@ -124,7 +148,8 @@ export default function App(){
             <div onClick={()=>setTab('calories')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Калории сегодня →</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p><p className="text-[10px] opacity-40 mt-1">{data.calories?.length||0} блюд</p></div>
             <div onClick={()=>setTab('tasks')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Задач →</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p><p className="text-[10px] opacity-40 mt-1">нажми для списка</p></div>
           </div>
-          <button onClick={()=>{ setTab('voice'); setTimeout(()=>{ if(!isRecording && !sending) startVoice() },150)}} className="w-full btn-gradient py-4 font-bold text-lg">🎙 Голосовой ввод</button>
+          <button onClick={()=>setTab('settings')} className="w-full btn-gradient py-4 font-bold text-lg">💎 Перейти на Премиум — снимает все лимиты</button>
+          <p className="text-[10px] opacity-40 text-center">Безлимит голос/текст, 365д истории, сводка 22:00</p>
         </div>
       )}
 
@@ -190,6 +215,42 @@ export default function App(){
             </div>
           ))}
           {data.notes?.filter(n=>n.kind!=='task').length>0 && <><h3 className="text-xs opacity-60 mt-3">Заметки/идеи</h3>{data.notes.filter(n=>n.kind!=='task').slice(0,10).map(n=><div key={n.id} className="glass p-3"><p className="font-semibold">{n.title}</p><p className="text-xs opacity-60">{n.kind}</p></div>)}</>}
+        </div>
+      )}
+
+      {tab==='settings' && (
+        <div className="space-y-4">
+          <h2 className="font-bold">⚙️ Подписка</h2>
+          <div className="glass p-4">
+            {premium.is_premium ? (
+              <div className="space-y-2">
+                <p className="text-sm font-bold text-green-400">✅ Premium активен</p>
+                <p className="text-2xl font-black">{premium.days_left} дней осталось</p>
+                <p className="text-xs opacity-60">до {premium.expires_at ? new Date(premium.expires_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'}) : '—'} • {premium.provider}</p>
+                <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden"><div className="h-2 bg-gradient-to-r from-[#8B5CF6] to-[#C084FC]" style={{width: `${Math.min(100, (premium.days_left/30)*100)}%`}} /></div>
+                <p className="text-[11px] opacity-60">При продлении срок добавляется к текущему — не сгорает. Оплатил сейчас +30д к {premium.days_left}д.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm font-bold">Free</p>
+                <p className="text-xs opacity-60">2 голоса + 5 текстов в день, 7 дней истории, без ИИ-сводки</p>
+                <p className="text-xs opacity-80">💎 Premium снимает все лимиты: безлимит, 365д истории, сводка 22:00</p>
+              </div>
+            )}
+          </div>
+          <p className="text-xs font-bold opacity-80">Продлить / купить:</p>
+          {[
+            {id:'1m', title:'1 месяц', price:'250 Stars (~299₽)', sub:'30 дней', badge:''},
+            {id:'3m', title:'3 месяца', price:'650 Stars • 799₽', sub:'90 дней', badge:'-11% 🔥'},
+            {id:'6m', title:'6 месяцев', price:'1300 Stars • 1599₽', sub:'180 дней', badge:'-16% ⭐'},
+          ].map(p=>(
+            <button key={p.id} onClick={()=>buyPlan(p.id)} disabled={!!paying} className="w-full glass p-4 flex justify-between items-center active:scale-[0.98] transition hover:bg-white/10 text-left">
+              <div><p className="font-bold">{p.title} {p.badge && <span className="text-xs bg-[#8B5CF6] px-2 py-0.5 rounded-full ml-1">{p.badge}</span>}</p><p className="text-xs opacity-60">{p.sub} • {p.price}</p></div>
+              <span className="btn-gradient px-4 py-2 rounded-xl text-sm font-bold">{paying===p.id ? '⏳' : 'Купить'}</span>
+            </button>
+          ))}
+          <p className="text-[10px] opacity-40 text-center">Оплата Stars через Telegram • чек в чате • после оплаты Premium включится автоматом</p>
+          <button onClick={refresh} className="w-full text-xs glass py-2">🔄 Обновить статус</button>
         </div>
       )}
 
