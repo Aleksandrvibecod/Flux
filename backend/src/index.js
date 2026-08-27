@@ -52,9 +52,10 @@ app.post('/parse', async (req, reply) => {
   try {
     parsed = await parseWithGemini({ text, audioBase64, audioMime });
   } catch (e) {
-    app.log.error({ err: e, telegramId }, 'parseWithGemini failed');
-    // возвращаем текст ошибки в бот, чтобы не было "Internal Server Error" без деталей
-    return reply.code(400).send({ error: `AI error: ${e.message?.slice(0,300) || e}` });
+    const raw = e.error?.error?.message || e.error?.message || e.message || String(e);
+    const details = JSON.stringify(e.error || raw).slice(0,800);
+    app.log.error({ err: e, raw, telegramId, audioMime, hasAudio: !!audioBase64 }, 'parseWithGemini failed');
+    return reply.code(400).send({ error: `AI error: ${raw}`, details, provider: e.error?.error?.metadata?.provider_name || null });
   }
   if (isAudio) await incVoice(user);
   else await incMessage(user);

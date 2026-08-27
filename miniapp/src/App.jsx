@@ -41,7 +41,7 @@ export default function App(){
           const fd = new FormData(); fd.append('file', blob, 'voice.webm')
           window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium')
           const res = await fetch(`${API}/parse`, { method:'POST', headers:{ 'x-telegram-id': String(tgId) }, body: fd }).then(r=>r.json())
-          if (res.error) throw new Error(res.error)
+          if (res.error) throw new Error(res.details ? `${res.error} | ${res.details.slice(0,200)}` : res.error)
           setVoiceResult(res.parsed)
           await refresh()
           window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
