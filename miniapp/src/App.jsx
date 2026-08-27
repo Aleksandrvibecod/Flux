@@ -148,8 +148,9 @@ export default function App(){
             <div onClick={()=>setTab('calories')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Калории сегодня →</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p><p className="text-[10px] opacity-40 mt-1">{data.calories?.length||0} блюд</p></div>
             <div onClick={()=>setTab('tasks')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Задач →</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p><p className="text-[10px] opacity-40 mt-1">нажми для списка</p></div>
           </div>
-          <button onClick={()=>setTab('settings')} className="w-full btn-gradient py-4 font-bold text-lg">💎 Перейти на Премиум — снимает все лимиты</button>
+          <button onClick={()=>setTab('settings')} className="mx-auto block px-5 py-2.5 rounded-full glass text-sm font-semibold opacity-80 hover:opacity-100 active:scale-95 transition">💎 Перейти на Премиум</button>
           <p className="text-[10px] opacity-40 text-center">Безлимит голос/текст, 365д истории, сводка 22:00</p>
+          <p className="text-[10px] opacity-20 text-center tracking-widest mt-1">by. P0dp1Vasn1K</p>
         </div>
       )}
 
