@@ -26,7 +26,7 @@ bot.command('start', async (ctx) => {
 bot.callbackQuery('premium', async (ctx) => {
   await ctx.answerCallbackQuery();
   // Telegram Stars оплата — заглушка, дальше подключить @BotFather Payments
-  await ctx.reply('💎 Premium — безлимит голос, вся история, ИИ-отчёты.\nОплата через Stars скоро. Сейчас free-лимит 10 войсов/день.');
+  await ctx.reply('💎 Premium — безлимит голос, вся история, ИИ-отчёты.\nОплата через Stars скоро. Сейчас free-лимит 2 голоса и 5 текстов в день.');
 });
 
 // текст
@@ -70,7 +70,7 @@ bot.on(['message:voice', 'message:audio', 'message:video_note'], async (ctx) => 
       headers: { 'x-telegram-id': String(ctx.from.id) },
       body: fd
     }).then(r=>r.json());
-    if (res.error) return ctx.reply(`⚠️ ${res.error}\nЛимит free — 10 голосовых в день.`);
+    if (res.error) return ctx.reply(`⚠️ ${res.error}\nЛимит free — 2 голосовых и 5 текстов в день.`);
     const p = res.parsed;
     await ctx.reply(`🎙 Распознал: ${p.title || p.dish || p.text || p.note || JSON.stringify(p)}`);
   } catch (e) {
