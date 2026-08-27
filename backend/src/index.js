@@ -48,7 +48,14 @@ app.post('/parse', async (req, reply) => {
     text = req.body?.text || '';
   }
 
-  const parsed = await parseWithGemini({ text, audioBase64, audioMime });
+  let parsed;
+  try {
+    parsed = await parseWithGemini({ text, audioBase64, audioMime });
+  } catch (e) {
+    app.log.error({ err: e, telegramId }, 'parseWithGemini failed');
+    // возвращаем текст ошибки в бот, чтобы не было "Internal Server Error" без деталей
+    return reply.code(400).send({ error: `AI error: ${e.message?.slice(0,300) || e}` });
+  }
   if (isAudio) await incVoice(user);
   else await incMessage(user);
 
@@ -107,6 +114,114 @@ app.get('/analytics', async (req) => {
   return { insights: insights.insights, transactions: tx, calories: cal };
 });
 
+// helpers для московской даты (22:00 МСК)
+function moscowDateStr(offsetDays = 0) {
+  const t = Date.now() + offsetDays * 86400000;
+  return new Date(t).toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' }); // YYYY-MM-DD
+}
+function moscowDayRange(offsetDays = 0) {
+  const dateStr = moscowDateStr(offsetDays);
+  return {
+    dateStr,
+    start: new Date(`${dateStr}T00:00:00+03:00`).toISOString(),
+    end: new Date(`${dateStr}T23:59:59.999+03:00`).toISOString(),
+  };
+}
+
+async function buildDailySummary(user) {
+  const today = moscowDayRange(0);
+  const yesterday = moscowDayRange(-1);
+  const tomorrow = moscowDayRange(1);
+
+  const [{ data: todayTx }, { data: yestTx }, { data: tomorrowReminders }, { data: openTasks }] = await Promise.all([
+    supabase.from('transactions').select('amount,category,type').eq('user_id', user.id).eq('type','expense').gte('created_at', today.start).lte('created_at', today.end),
+    supabase.from('transactions').select('amount,category,type').eq('user_id', user.id).eq('type','expense').gte('created_at', yesterday.start).lte('created_at', yesterday.end),
+    supabase.from('reminders').select('text,remind_at').eq('user_id', user.id).gte('remind_at', tomorrow.start).lte('remind_at', tomorrow.end).order('remind_at'),
+    supabase.from('notes').select('title,kind').eq('user_id', user.id).eq('kind','task').eq('is_done', false).limit(10),
+  ]);
+
+  const sum = (arr) => arr?.reduce((s,t)=> s + Number(t.amount||0), 0) || 0;
+  const byCat = (arr) => {
+    const m={}; arr?.forEach(t=>{ const k=t.category||'прочее'; m[k]=(m[k]||0)+Number(t.amount||0) });
+    return m;
+  };
+  const todaySum = sum(todayTx);
+  const yestSum = sum(yestTx);
+  const todayByCat = byCat(todayTx);
+  const yestByCat = byCat(yestTx);
+
+  const allCats = new Set([...Object.keys(todayByCat), ...Object.keys(yestByCat)]);
+  let catLines = [];
+  for (const cat of allCats) {
+    const a = todayByCat[cat]||0, b = yestByCat[cat]||0;
+    if (a===0 && b===0) continue;
+    const diff = a-b;
+    const pct = b ? Math.round(diff/b*100) : null;
+    const sign = diff>0?'+':'' ;
+    const arrow = diff>0?'🔺': diff<0?'✅':'—';
+    const pctStr = pct===null ? 'новая' : `${sign}${pct}%`;
+    catLines.push(`• ${cat}: ${a} ₽ vs ${b} ₽ (${sign}${diff} ₽, ${pctStr} ${arrow})`);
+  }
+  if (!catLines.length) catLines = ['• трат сегодня нет — так держать!'];
+
+  const totalPct = yestSum ? Math.round((todaySum-yestSum)/yestSum*100) : null;
+  const totalLine = yestSum || todaySum
+    ? `💸 Расходы сегодня: ${todaySum} ₽ (вчера ${yestSum} ₽${totalPct!==null?`, ${totalPct>0?'+':''}${totalPct}%`:''})`
+    : `💸 Сегодня без трат`;
+
+  const tomorrowDate = new Date(tomorrow.dateStr).toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'short'});
+  let tasksLines = [];
+  if (tomorrowReminders?.length) {
+    tasksLines.push(...tomorrowReminders.map(r=>{
+      const t = new Date(r.remind_at).toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit'});
+      return `• ${t} — ${r.text}`;
+    }));
+  }
+  if (openTasks?.length && tasksLines.length < 5) {
+    tasksLines.push(...openTasks.slice(0, 5 - tasksLines.length).map(n=> `• задача: ${n.title}`));
+  }
+  if (!tasksLines.length) tasksLines = ['• дел на завтра нет — отдыхай 😴'];
+
+  const header = `🌙 Вечерняя сводка FLUX — ${new Date().toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow', day:'numeric', month:'short'})}`;
+  return `${header}\n\n${totalLine}\n\nПо статьям:\n${catLines.slice(0,10).join('\n')}\n\n📅 На завтра (${tomorrowDate}):\n${tasksLines.join('\n')}`;
+}
+
+async function sendDailyToAll() {
+  const botUrl = process.env.BOT_NOTIFY_URL;
+  if (!botUrl) { app.log.warn('BOT_NOTIFY_URL не задан — daily сводка не отправится'); return; }
+  const { data: users } = await supabase.from('users').select('id,telegram_id').limit(1000);
+  if (!users?.length) return;
+  for (const u of users) {
+    try {
+      const text = await buildDailySummary(u);
+      await fetch(botUrl, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ telegram_id: u.telegram_id, text }) });
+      await new Promise(r=>setTimeout(r,150)); // не спамим Telegram 429
+    } catch (e) { app.log.error({err:e, telegram_id:u.telegram_id}, 'daily send failed'); }
+  }
+  app.log.info(`daily summary sent to ${users.length} users`);
+}
+
+// тест руками: GET /daily-test?telegram_id=1072185171  или POST /daily-send (для админа)
+app.get('/daily-test', async (req,reply)=>{
+  const id = Number(req.query.telegram_id || req.telegramId);
+  if (!id) return reply.code(400).send({error:'need telegram_id'});
+  const user = await getOrCreateUser(id);
+  const text = await buildDailySummary(user);
+  return { telegram_id: id, text };
+});
+app.post('/daily-send', async (req,reply)=>{
+  const id = Number(req.body?.telegram_id || req.telegramId);
+  if (id) {
+    const user = await getOrCreateUser(id);
+    const text = await buildDailySummary(user);
+    const botUrl = process.env.BOT_NOTIFY_URL;
+    if (botUrl) await fetch(botUrl, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({telegram_id:id, text})});
+    return { sent_to: id, text };
+  }
+  await sendDailyToAll();
+  return { sent_to: 'all' };
+});
+
 // cron — каждую минуту проверяем напоминания
 cron.schedule('* * * * *', async () => {
   const now = new Date().toISOString();
@@ -120,6 +235,12 @@ cron.schedule('* * * * *', async () => {
     } catch (e) { app.log.error(e); }
   }
 });
+
+// cron — каждый день в 22:00 МСК сводка по расходам + дела на завтра
+cron.schedule('0 22 * * *', async () => {
+  app.log.info('daily 22:00 cron start');
+  try { await sendDailyToAll(); } catch(e){ app.log.error(e); }
+}, { timezone: 'Europe/Moscow' });
 
 const port = process.env.PORT || 3000;
 app.listen({ port, host: '0.0.0.0' }).then(()=> app.log.info(`backend on ${port}`));

@@ -12,7 +12,29 @@ export default function App(){
       .then(r=>r.json()).then(setData).catch(()=>{})
   },[])
 
-  const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? t.amount : -t.amount), 0) || 0
+  const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
+
+  // динамика столбиков: сумма расходов за последние 7 дней -> высота
+  const last7Expenses = React.useMemo(()=>{
+    const days = Array.from({length:7}, (_,k)=>{
+      const d = new Date(); d.setDate(d.getDate()-(6-k)); d.setHours(0,0,0,0)
+      return d
+    })
+    return days.map(d=>{
+      const key = d.toISOString().slice(0,10)
+      return (data.transactions||[])
+        .filter(t=> t.type==='expense' && t.created_at?.slice(0,10)===key)
+        .reduce((s,t)=> s + Number(t.amount||0), 0)
+    })
+  },[data.transactions])
+  const maxExpense = Math.max(...last7Expenses, 1)
+  const dayLabels = React.useMemo(()=>{
+    const fmt = new Intl.DateTimeFormat('ru-RU',{weekday:'short'})
+    return Array.from({length:7},(_,k)=>{
+      const d=new Date(); d.setDate(d.getDate()-(6-k))
+      return fmt.format(d)
+    })
+  },[])
 
   return (
     <div className="min-h-screen relative overflow-hidden p-4 pb-24">
@@ -29,9 +51,22 @@ export default function App(){
           <div className="glass p-5">
             <p className="text-sm opacity-60">Баланс</p>
             <p className="text-3xl font-black">{balance.toLocaleString('ru-RU')} ₽</p>
-            <div className="mt-4 h-16 flex gap-1 items-end">
-              {[12,18,9,22,16,20,14].map((h,i)=><div key={i} style={{height:h*3}} className="flex-1 rounded-t-lg bg-gradient-to-t from-[#8B5CF6] to-[#C084FC] opacity-80"/>)}
+            <div className="mt-4 h-20 flex gap-1.5 items-end">
+              {last7Expenses.map((v,i)=>{
+                const h = v===0 ? 8 : Math.round((v/maxExpense)*56 + 12) // 12..68px, 0->8px
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                    <div
+                      title={`${dayLabels[i]}: ${v} ₽`}
+                      style={{height:h}}
+                      className="w-full rounded-t-lg bg-gradient-to-t from-[#8B5CF6] to-[#C084FC] opacity-90 transition-all duration-500"
+                    />
+                    <span className="text-[9px] opacity-40 leading-none">{dayLabels[i]}</span>
+                  </div>
+                )
+              })}
             </div>
+            <p className="text-[10px] opacity-40 mt-1">{last7Expenses.some(v=>v>0) ? `макс ${Math.max(...last7Expenses)} ₽ за день` : 'нет расходов за 7 дней — скажи "потратил 500 на обед"'}</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="glass p-4"><p className="text-xs opacity-60">Калории сегодня</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p></div>

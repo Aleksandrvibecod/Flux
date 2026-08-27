@@ -10,7 +10,6 @@ const client = new OpenAI({
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'google/gemini-2.0-flash-lite-preview-02-05:free';
 
 // Универсальный парсер: текст или аудио (base64) → JSON
-// Для аудио: передаём как input_audio / audio_url — Gemini через OpenRouter понимает оба
 export async function parseWithGemini({ text, audioBase64, audioMime = 'audio/ogg' }) {
   const system = `Ты — парсер для Flux. Верни ТОЛЬКО JSON без markdown.
 Типы:
@@ -22,14 +21,56 @@ export async function parseWithGemini({ text, audioBase64, audioMime = 'audio/og
 Если не распознал — {"type":"note","kind":"note","title":text,"content":""}
 Категории расходов строго из списка. Сумму ищи как число. Дату парси как Europe/Moscow.`;
 
+  // Если есть аудио — сначала транскрибируем через Whisper (надежнее чем Gemini audio через OpenRouter)
+  // Логи в Railway показывали: Audio inp... 400 от Google AI Studio + 429 gemma-4-26b:free — прямой Gemini audio сломан
+  if (audioBase64) {
+    try {
+      const audioBuffer = Buffer.from(audioBase64, 'base64');
+      // OpenRouter поддерживает openai/whisper-large-v3 и gpt-4o транскрибацию
+      // Пробуем Whisper через OpenAI-совместимый endpoint
+      const file = new File([audioBuffer], 'voice.ogg', { type: audioMime });
+      const tr = await client.audio.transcriptions.create({
+        model: 'openai/whisper-large-v3',
+        file: file,
+        language: 'ru',
+      });
+      const transcribed = tr.text?.trim();
+      if (transcribed) {
+        console.log('Whisper transcribed:', transcribed.slice(0,120));
+        text = text ? `${text} ${transcribed}` : transcribed;
+      }
+    } catch (e) {
+      console.warn('Whisper failed, fallback to Gemini input_audio:', e.message?.slice(0,200));
+      // fallback — пробуем Gemini напрямую c input_audio (требует wav/mp3, не ogg)
+      let userContent = [];
+      if (text) userContent.push({ type: 'text', text });
+      userContent.push({ type: 'text', text: 'Расшифруй аудио и спарси как JSON по системе.' });
+      // костыль: заявляем mp3 — OpenRouter часто транскодит ogg->mp3 сам
+      const fmt = audioMime.includes('wav') ? 'wav' : 'mp3';
+      userContent.push({ type: 'input_audio', input_audio: { data: audioBase64, format: fmt } });
+      try {
+        const resp = await client.chat.completions.create({
+          model: GEMINI_MODEL,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userContent }
+          ],
+          temperature: 0.2,
+          max_tokens: 800,
+        });
+        let raw = resp.choices[0]?.message?.content?.trim() || '{}';
+        const m = raw.match(/\{[\s\S]*\}/);
+        if (m) raw = m[0];
+        try { return JSON.parse(raw); } catch { return { type: 'note', kind: 'note', title: text||'заметка', content: raw }; }
+      } catch (e2) {
+        // если и это упало — все равно парсим text (хоть пустой)
+        console.error('Gemini input_audio also failed:', e2.message?.slice(0,300));
+      }
+    }
+  }
+
   let userContent = [];
   if (text) userContent.push({ type: 'text', text });
-  if (audioBase64) {
-    userContent.push({ type: 'text', text: 'Расшифруй аудио и спарси как JSON по системе.' });
-    // OpenRouter Gemini принимает аудио как base64 в image_url поле — пробуем оба варианта
-    userContent.push({ type: 'image_url', image_url: { url: `data:${audioMime};base64,${audioBase64}` } });
-  }
-  if (userContent.length === 0) userContent = [{ type: 'text', text: 'пусто' }];
 
   const resp = await client.chat.completions.create({
     model: GEMINI_MODEL,
