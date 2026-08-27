@@ -26,11 +26,10 @@ app.post('/parse', async (req, reply) => {
   const user = await getOrCreateUser(telegramId, {});
 
   // лимит voice
-  const isAudio = req.isMultipart();
   if (isAudio) {
-    const ok = await canUseVoice(user);
-    if (!ok) return reply.code(403).send({ error: 'voice limit 10/day, need premium' });
-  }
+  const ok = await canUseVoice(user);
+  if (!ok) return reply.code(403).send({ error: 'voice limit 10/day, need premium' });
+}
 
   let text = '';
   let audioBase64 = null;
