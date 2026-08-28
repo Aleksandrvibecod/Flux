@@ -151,8 +151,40 @@ export default function App(){
   const chunksRef = useRef([])
   const timerRef = useRef(null)
 
+  // бесплатный фолбек — Web Speech API (браузер, без OpenRouter Whisper $0.50)
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  const useWebSpeech = !!SpeechRecognition
+  const recRef = useRef(null)
+
   const startVoice = async ()=>{
     setVoiceError(null); setVoiceResult(null)
+    // 1) пробуем бесплатный браузерный Web Speech
+    if (useWebSpeech) {
+      try{
+        const rec = new (window.SpeechRecognition || window.webkitSpeechRecognition)()
+        rec.lang = 'ru-RU'
+        rec.interimResults = false
+        rec.maxAlternatives = 1
+        recRef.current = rec
+        rec.onstart = ()=>{ setIsRecording(true); setSeconds(0); timerRef.current=setInterval(()=>setSeconds(s=>s+1),1000); window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('heavy') }
+        rec.onresult = async (e)=>{
+          const text = e.results[0][0].transcript
+          setIsRecording(false); clearInterval(timerRef.current); setSending(true)
+          try{
+            const res = await fetch(`${API}/parse`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ text, telegram_id: tgId }) }).then(r=>r.json())
+            if (res.error) throw new Error(res.error)
+            setVoiceResult(res.parsed); await refresh()
+            window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
+          }catch(err){ setVoiceError(err.message); window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error') }
+          finally{ setSending(false) }
+        }
+        rec.onerror = (e)=>{ setVoiceError(e.error==='not-allowed'?'Разреши микрофон':e.error); setIsRecording(false); clearInterval(timerRef.current) }
+        rec.onend = ()=>{ setIsRecording(false); clearInterval(timerRef.current) }
+        rec.start()
+        return
+      }catch(e){ console.warn('WebSpeech fail, fallback to MediaRecorder', e) }
+    }
+    // 2) фолбек — старый MediaRecorder -> Whisper (платный, требует $0.50 на OpenRouter)
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' })
@@ -171,7 +203,7 @@ export default function App(){
           setVoiceResult(res.parsed)
           await refresh()
           window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
-        }catch(e){ setVoiceError(e.message); window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error') }
+        }catch(e){ setVoiceError(e.message + ' — попробуй пополнить OpenRouter $0.50 или используй Chrome/Safari'); window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error') }
         finally{ setSending(false) }
       }
       mr.start(); setIsRecording(true); setSeconds(0)
@@ -182,6 +214,7 @@ export default function App(){
     }
   }
   const stopVoice = ()=>{
+    if (recRef.current) { try{ recRef.current.stop() }catch{}; recRef.current=null }
     if (mediaRef.current?.state==='recording') mediaRef.current.stop()
     setIsRecording(false); clearInterval(timerRef.current)
   }
@@ -458,7 +491,7 @@ export default function App(){
           )}
 
           {isRecording && <p className="text-2xl font-mono font-bold">{String(Math.floor(seconds/60)).padStart(2,'0')}:{String(seconds%60).padStart(2,'0')}</p>}
-          {sending && <p className="text-xs opacity-60">Распознаю через Whisper...</p>}
+          {sending && <p className="text-xs opacity-60">{useWebSpeech ? 'Распознаю в браузере — бесплатно...' : 'Распознаю через Whisper...'}</p>}
 
           {voiceResult && (
             <div className="glass p-3 text-left text-sm">
@@ -468,7 +501,7 @@ export default function App(){
             </div>
           )}
           {voiceError && <p className="text-sm text-red-400">⚠️ {voiceError}</p>}
-          <p className="text-xs opacity-40">Работает без возврата в чат — жми 🎙, говори, жми ⏹. Чат-бот тоже остался как запасной.</p>
+          <p className="text-xs opacity-40">Бесплатно в браузере (Chrome/Safari) — без OpenRouter $0.50. Жми 🎙, говори, жми ⏹. Чат-бот остался как запасной.</p>
         </div>
       )}
 
