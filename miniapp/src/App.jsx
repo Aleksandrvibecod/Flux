@@ -13,7 +13,9 @@ export default function App(){
     return Number(p.get('telegram_id') || p.get('tgId') || 0) || 12345
   }
   const tgId = getTgId()
+  const isAdmin = tgId === 1072185171
   const [premium, setPremium] = useState({ is_premium:false, expires_at:null, days_left:0 })
+  const [adminStats, setAdminStats] = useState(null)
 
   useEffect(()=>{
     setLoading(true)
@@ -21,12 +23,14 @@ export default function App(){
       fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()),
       fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).catch(()=>({is_premium:false}))
     ]).then(([h,p])=>{ setData(h); setPremium(p); setLoading(false)}).catch(()=>setLoading(false))
+    if (isAdmin) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
   },[])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
   const refresh = ()=> {
     fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': tgId } }).then(r=>r.json()).then(setData).catch(()=>{})
     fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).then(setPremium).catch(()=>{})
+    if (isAdmin) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
   }
   const [paying, setPaying] = useState(null)
   const [editingBudget, setEditingBudget] = useState(false)
@@ -406,6 +410,20 @@ export default function App(){
       {tab==='settings' && (
         <div className="space-y-4">
           <h2 className="font-bold">⚙️ Подписка</h2>
+          {isAdmin && adminStats && (
+            <div className="glass p-4 border border-yellow-500/30 bg-yellow-500/10">
+              <p className="text-xs font-bold text-yellow-400">👑 Админ — видно только тебе</p>
+              <p className="text-lg font-black">👥 {adminStats.total} пользователей</p>
+              <div className="flex gap-2 text-xs opacity-80 mt-1">
+                <span className="glass px-2 py-1">💎 {adminStats.premium} premium</span>
+                <span className="glass px-2 py-1">🆓 {adminStats.free} free</span>
+              </div>
+              <div className="flex gap-2 text-xs opacity-60 mt-2">
+                <span>🆕 Сегодня: {adminStats.today}</span>
+                <span>• Неделя: {adminStats.week}</span>
+              </div>
+            </div>
+          )}
           <div className="glass p-4">
             {premium.is_premium ? (
               <div className="space-y-2">

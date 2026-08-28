@@ -6,6 +6,8 @@ import 'dotenv/config';
 import { supabase, getOrCreateUser, canUseVoice, incVoice, canUseMessage, incMessage } from './supabase.js';
 import { parseWithGemini, generateInsights, parseReceiptImage, parseFoodImage } from './gemini.js';
 
+const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || '1072185171').split(',').map(s=>Number(s.trim())).filter(Boolean);
+
 async function handleCoffeeStreak(user) {
   try {
     const today = moscowDayRange(0);
@@ -221,6 +223,18 @@ app.delete('/notes/:id', async (req,reply)=>{
   const user = await getOrCreateUser(uid);
   await supabase.from('notes').delete().eq('id', req.params.id).eq('user_id', user.id);
   return {ok:true}
+});
+
+// админ счетчик — виден только тебе
+app.get('/admin/stats', async (req,reply)=>{
+  const tid = req.telegramId;
+  if (!ADMIN_IDS.includes(tid)) return reply.code(403).send({error:'forbidden'});
+  const { count: total } = await supabase.from('users').select('*', {count:'exact', head:true});
+  const { count: premium } = await supabase.from('users').select('*', {count:'exact', head:true}).eq('is_premium', true);
+  const todayStr = new Date().toISOString().slice(0,10);
+  const { count: today } = await supabase.from('users').select('*', {count:'exact', head:true}).gte('created_at', todayStr);
+  const { count: week } = await supabase.from('users').select('*', {count:'exact', head:true}).gte('created_at', new Date(Date.now()-7*86400000).toISOString());
+  return { total, premium, free: (total||0)-(premium||0), today, week };
 });
 
 // helpers для московской даты (22:00 МСК)

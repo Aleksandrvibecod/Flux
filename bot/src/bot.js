@@ -9,6 +9,7 @@ if (!token) {
 const bot = new Bot(token || '123456:TEST_TOKEN_DO_NOT_USE');
 const BACKEND = (process.env.BACKEND_URL || 'http://localhost:3000').trim();
 const MINIAPP_URL = (process.env.MINIAPP_URL || 'https://your-vercel.app').trim();
+const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || '1072185171').split(',').map(s=>Number(s.trim())).filter(Boolean);
 
 // /start
 bot.command('start', async (ctx) => {
@@ -50,6 +51,15 @@ async function sendStarsInvoice(ctx, plan) {
 bot.callbackQuery('buy_1m', async (ctx) => { await ctx.answerCallbackQuery(); try { await sendStarsInvoice(ctx,'1m'); } catch(e){ await ctx.reply('⚠️ '+e.message); } });
 bot.callbackQuery('buy_3m', async (ctx) => { await ctx.answerCallbackQuery(); try { await sendStarsInvoice(ctx,'3m'); } catch(e){ await ctx.reply('⚠️ '+e.message); } });
 bot.callbackQuery('buy_6m', async (ctx) => { await ctx.answerCallbackQuery(); try { await sendStarsInvoice(ctx,'6m'); } catch(e){ await ctx.reply('⚠️ '+e.message); } });
+
+bot.command('stats', async (ctx)=>{
+  if (!ADMIN_IDS.includes(ctx.from.id)) return ctx.reply('⛔ Только для админа');
+  try{
+    const res = await fetch(`${BACKEND}/admin/stats`, { headers:{'x-telegram-id': String(ctx.from.id)} }).then(r=>r.json());
+    if (res.error) return ctx.reply('⚠️ '+res.error);
+    await ctx.reply(`👥 Всего: ${res.total}\n💎 Premium: ${res.premium} • Free: ${res.free}\n🆕 Сегодня: ${res.today} • За неделю: ${res.week}`);
+  }catch(e){ await ctx.reply('⚠️ Ошибка получения статистики'); }
+});
 
 // обязательны для Stars
 bot.on('pre_checkout_query', async (ctx) => {
