@@ -290,6 +290,12 @@ export default function App(){
           ))}
           <p className="text-[10px] opacity-40 text-center">Оплата Stars через Telegram • чек в чате • после оплаты Premium включится автоматом</p>
           <button onClick={refresh} className="w-full text-xs glass py-2">🔄 Обновить статус</button>
+          <a
+            href="https://t.me/P0dp1Vasn1K"
+            onClick={(e)=>{ e.preventDefault(); const url='https://t.me/P0dp1Vasn1K'; if(window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(url); else if(window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(url); else window.open(url,'_blank'); }}
+            className="w-full glass py-3 rounded-xl text-sm font-semibold text-center block active:scale-95 transition hover:bg-white/10"
+          >💬 Поддержка</a>
+          <p className="text-[10px] opacity-30 text-center">напиши @P0dp1Vasn1K если что-то не работает</p>
         </div>
       )}
 
