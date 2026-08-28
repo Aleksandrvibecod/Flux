@@ -1,7 +1,9 @@
+* { box-sizing: border-box; }
+html { overflow-x: hidden; }
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-body { background: #0A0A0A; color: white; font-family: -apple-system, BlinkMacSystemFont, SF Pro Display, sans-serif; }
-.glass { background: rgba(255,255,255,0.07); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; }
-.gradient-blob { position: fixed; width: 400px; height: 400px; background: radial-gradient(circle, #8B5CF6 0%, #C084FC 40%, transparent 70%); filter: blur(60px); opacity: 0.3; pointer-events: none; }
+body { background: #0A0A0A; color: white; font-family: -apple-system, BlinkMacSystemFont, SF Pro Display, sans-serif; margin: 0; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+.glass { background: rgba(255,255,255,0.07); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; overflow: hidden; }
+.gradient-blob { position: absolute; width: 400px; height: 400px; background: radial-gradient(circle, #8B5CF6 0%, #C084FC 40%, transparent 70%); filter: blur(60px); opacity: 0.3; pointer-events: none; }
 .btn-gradient { background: linear-gradient(135deg, #8B5CF6, #C084FC); border-radius: 16px; }

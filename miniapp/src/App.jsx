@@ -258,7 +258,7 @@ export default function App(){
   },[data.transactions, trackerFilter, search])
 
   return (
-    <div className="min-h-screen relative overflow-hidden p-4 pb-24">
+    <div className="min-h-screen relative p-4 pb-32 max-w-md mx-auto w-full overflow-x-hidden">
       <div className="gradient-blob" style={{top:-100, left:-80}} />
       <div className="gradient-blob" style={{bottom:100, right:-100, background: 'radial-gradient(circle, #A855F7 0%, transparent 70%)'}} />
       
@@ -287,9 +287,9 @@ export default function App(){
 
       {tab==='home' && !loading && (
         <div className="space-y-4">
-          <div className="glass p-3 flex gap-2">
-            <input value={quickText} onChange={e=>setQuickText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendQuickText()} placeholder="Потратил 500 на обед..." className="flex-1 bg-transparent outline-none text-sm placeholder:opacity-40" />
-            <button onClick={sendQuickText} disabled={textSending || !quickText.trim()} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold disabled:opacity-40">{textSending?'...':'ОК'}</button>
+          <div className="glass p-3 flex gap-2 min-w-0">
+            <input value={quickText} onChange={e=>setQuickText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendQuickText()} placeholder="Потратил 500 на обед..." className="flex-1 min-w-0 bg-transparent outline-none text-sm placeholder:opacity-40" />
+            <button onClick={sendQuickText} disabled={textSending || !quickText.trim()} className="shrink-0 px-4 py-1.5 rounded-full btn-gradient text-sm font-bold disabled:opacity-40">{textSending?'...':'ОК'}</button>
           </div>
 
           <div onClick={()=>setTab('tracker')} className="glass p-5 cursor-pointer active:scale-[0.98] transition hover:bg-white/10">
@@ -350,10 +350,10 @@ export default function App(){
                 </div>
               )
             })}
-            <div className="flex gap-2">
-              <input value={newGoal.title} onChange={e=>setNewGoal({...newGoal, title:e.target.value})} placeholder="Название" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-xs outline-none" />
-              <input value={newGoal.amount} onChange={e=>setNewGoal({...newGoal, amount:e.target.value})} placeholder="80000" type="number" className="w-24 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-xs outline-none" />
-              <button onClick={createGoal} className="px-3 py-1.5 btn-gradient rounded-lg text-xs font-bold">+</button>
+            <div className="flex gap-2 min-w-0">
+              <input value={newGoal.title} onChange={e=>setNewGoal({...newGoal, title:e.target.value})} placeholder="Название" className="flex-1 min-w-0 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-xs outline-none" />
+              <input value={newGoal.amount} onChange={e=>setNewGoal({...newGoal, amount:e.target.value})} placeholder="80000" type="number" className="w-24 shrink-0 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-xs outline-none" />
+              <button onClick={createGoal} className="shrink-0 px-3 py-1.5 btn-gradient rounded-lg text-xs font-bold">+</button>
             </div>
             <p className="text-[10px] opacity-40">Скажи: “хочу на отпуск 80к” или “отложил 5к на айфон”</p>
           </div>
@@ -361,9 +361,9 @@ export default function App(){
           {/* советник */}
           <div className="glass p-4 space-y-2">
             <p className="text-sm font-bold">🤖 ИИ-советник</p>
-            <div className="flex gap-2">
-              <input value={advQ} onChange={e=>setAdvQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&askAdvisor()} placeholder="Почему я перетратил?" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm outline-none" />
-              <button onClick={askAdvisor} disabled={advLoading} className="px-4 py-2 btn-gradient rounded-lg text-sm font-bold disabled:opacity-40">{advLoading?'...':'Спросить'}</button>
+            <div className="flex gap-2 min-w-0">
+              <input value={advQ} onChange={e=>setAdvQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&askAdvisor()} placeholder="Почему я перетратил?" className="flex-1 min-w-0 bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm outline-none" />
+              <button onClick={askAdvisor} disabled={advLoading} className="shrink-0 px-4 py-2 btn-gradient rounded-lg text-sm font-bold disabled:opacity-40">{advLoading?'...':'Спросить'}</button>
             </div>
             {advA && <div className="glass p-3 text-sm whitespace-pre-wrap">{advA}</div>}
           </div>
@@ -540,12 +540,14 @@ export default function App(){
         </div>
       )}
 
-      <nav className="fixed bottom-3 left-3 right-3 glass flex justify-around py-3">
-        {[
-          ['home','🏠'], ['tracker','💳'], ['voice','🎙'], ['tasks','✓'], ['settings','⚙️']
-        ].map(([id,icon])=>(
-          <button key={id} onClick={()=>setTab(id)} className={`w-10 h-10 rounded-2xl flex items-center justify-center ${tab===id?'btn-gradient':''}`}>{icon}</button>
-        ))}
+      <nav className="fixed bottom-0 left-0 right-0 p-3 bg-[#0A0A0A]/80 backdrop-blur-xl border-t border-white/5">
+        <div className="max-w-md mx-auto glass flex justify-around py-2 px-2">
+          {[
+            ['home','🏠'], ['tracker','💳'], ['voice','🎙'], ['tasks','✓'], ['settings','⚙️']
+          ].map(([id,icon])=>(
+            <button key={id} onClick={()=>setTab(id)} className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${tab===id?'btn-gradient':''}`}>{icon}</button>
+          ))}
+        </div>
       </nav>
     </div>
   )
