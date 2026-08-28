@@ -4,7 +4,8 @@ const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'
 
 export default function App(){
   const [tab, setTab] = useState('home')
-  const [data, setData] = useState({ transactions:[], calories:[], notes:[] })
+  const [data, setData] = useState({ transactions:[], calories:[], notes:[], streaks:[] })
+  const [loading, setLoading] = useState(true)
   const getTgId = ()=> {
     const w = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
     if (w) return w
@@ -15,10 +16,11 @@ export default function App(){
   const [premium, setPremium] = useState({ is_premium:false, expires_at:null, days_left:0 })
 
   useEffect(()=>{
-    fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } })
-      .then(r=>r.json()).then(d=>{ console.log('history',d); setData(d) }).catch(e=>console.warn('history fail',e))
-    fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } })
-      .then(r=>r.json()).then(setPremium).catch(()=>{})
+    setLoading(true)
+    Promise.all([
+      fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()),
+      fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).catch(()=>({is_premium:false}))
+    ]).then(([h,p])=>{ setData(h); setPremium(p); setLoading(false)}).catch(()=>setLoading(false))
   },[])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
@@ -45,7 +47,38 @@ export default function App(){
     finally{ setPaying(null) }
   }
 
-  // голос прямо из миниапа — без возврата в чат
+  // быстрый текст
+  const [quickText, setQuickText] = useState('')
+  const [textSending, setTextSending] = useState(false)
+  const sendQuickText = async ()=>{
+    if (!quickText.trim()) return
+    setTextSending(true)
+    try{
+      const res = await fetch(`${API}/parse`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ text: quickText, telegram_id: tgId }) }).then(r=>r.json())
+      if (res.error) throw new Error(res.error)
+      setQuickText(''); await refresh()
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
+    }catch(e){ alert(e.message) }
+    finally{ setTextSending(false) }
+  }
+
+  // фильтры и поиск
+  const [trackerFilter, setTrackerFilter] = useState('all') // all/expense/income
+  const [search, setSearch] = useState('')
+  const [chartMode, setChartMode] = useState('week') // week/month
+  const [onboardDismissed, setOnboardDismissed] = useState(()=> localStorage.getItem('flux_onboard')==='1')
+
+  const delItem = async (type, id)=>{
+    if (!confirm('Удалить?')) return
+    const map = { expense:'transactions', income:'transactions', calories:'calories', task:'notes', note:'notes' }
+    const path = type==='calories' ? 'calories' : type==='task' || type==='note' ? 'notes' : 'transactions'
+    try{
+      await fetch(`${API}/${path}/${id}?telegram_id=${tgId}`, { method:'DELETE', headers:{'x-telegram-id': String(tgId)} })
+      await refresh()
+    }catch{}
+  }
+
+  // голос
   const [isRecording, setIsRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [sending, setSending] = useState(false)
@@ -118,14 +151,52 @@ export default function App(){
         .reduce((s,t)=> s + Number(t.amount||0), 0)
     })
   },[data.transactions])
-  const maxExpense = Math.max(...last7Expenses, 1)
+  // для месяца агрегируем по неделям
+  const monthlyExpenses = React.useMemo(()=>{
+    const now = new Date()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const weeks = [0,0,0,0,0]
+    ;(data.transactions||[]).filter(t=>t.type==='expense').forEach(t=>{
+      const d = new Date(t.created_at)
+      if (d.getMonth()!==now.getMonth() || d.getFullYear()!==now.getFullYear()) return
+      const w = Math.min(4, Math.floor((d.getDate()-1)/7))
+      weeks[w]+=Number(t.amount||0)
+    })
+    return weeks
+  },[data.transactions])
+  const chartData = chartMode==='week' ? last7Expenses : monthlyExpenses
+  const maxExpense = Math.max(...chartData, 1)
   const dayLabels = React.useMemo(()=>{
+    if (chartMode==='month') return ['Нед1','Нед2','Нед3','Нед4','Нед5']
     const fmt = new Intl.DateTimeFormat('ru-RU',{weekday:'short', timeZone:'Europe/Moscow'})
     return Array.from({length:7},(_,k)=>{
       const d=new Date(); d.setDate(d.getDate()+(k-6))
       return fmt.format(d)
     })
-  },[])
+  },[chartMode])
+
+  // бюджет 20к
+  const BUDGET = 20000
+  const monthSpent = React.useMemo(()=>{
+    const now=new Date(); return (data.transactions||[]).filter(t=>t.type==='expense' && new Date(t.created_at).getMonth()===now.getMonth()).reduce((s,t)=>s+Number(t.amount||0),0)
+  },[data.transactions])
+  const budgetPct = Math.min(100, Math.round(monthSpent/BUDGET*100))
+  // пирог по категориям
+  const byCat = React.useMemo(()=>{
+    const m={}; (data.transactions||[]).filter(t=>t.type==='expense').forEach(t=>{ const k=t.category||'прочее'; m[k]=(m[k]||0)+Number(t.amount||0) })
+    const total = Object.values(m).reduce((a,b)=>a+b,0) || 1
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>({k,v,pct:Math.round(v/total*100)}))
+  },[data.transactions])
+
+  const filteredTx = React.useMemo(()=>{
+    let arr = data.transactions||[]
+    if (trackerFilter!=='all') arr = arr.filter(t=>t.type===trackerFilter)
+    if (search) {
+      const q=search.toLowerCase()
+      arr = arr.filter(t=> (t.category||'').toLowerCase().includes(q) || (t.note||'').toLowerCase().includes(q) || String(t.amount).includes(q))
+    }
+    return arr
+  },[data.transactions, trackerFilter, search])
 
   return (
     <div className="min-h-screen relative overflow-hidden p-4 pb-24">
@@ -141,33 +212,62 @@ export default function App(){
             return <span className="text-sm px-2 py-0.5 rounded-full glass flex items-center gap-1" title={`${s} дней без кофе`}>{'🔥'.repeat(Math.min(s,5))} {s}д</span>
           })()}
         </div>
-        <div className="flex items-center gap-2">
-          {data.bonus_balance ? <span className="text-xs px-2 py-1 rounded-full bg-[#8B5CF6]/20 text-[#C084FC] font-bold">🎁 {data.bonus_balance}</span> : null}
-          <span className="text-xs px-3 py-1 rounded-full glass">● Online</span>
-        </div>
+        <span className="text-xs px-3 py-1 rounded-full glass">● Online</span>
       </header>
 
-      {tab==='home' && (
+      {loading && <div className="space-y-3 animate-pulse"><div className="glass h-32"/><div className="glass h-20"/></div>}
+
+      {!loading && !onboardDismissed && (data.transactions?.length||0)===0 && (
+        <div className="glass p-4 mb-4 space-y-2 border border-[#8B5CF6]/30">
+          <p className="font-bold">👋 Привет! 3 примера:</p>
+          <p className="text-xs opacity-80">• “Потратил 500 на обед” • “Съел борщ 350 ккал” • “Напомни завтра в 10”</p>
+          <p className="text-xs opacity-60">Пиши текстом ниже, голосом или фото. Попробуй сейчас:</p>
+          <button onClick={()=>{setOnboardDismissed(true); localStorage.setItem('flux_onboard','1')}} className="w-full btn-gradient py-2 rounded-xl text-sm">Понятно</button>
+        </div>
+      )}
+
+      {tab==='home' && !loading && (
         <div className="space-y-4">
+          {/* быстрый ввод текста */}
+          <div className="glass p-3 flex gap-2">
+            <input value={quickText} onChange={e=>setQuickText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendQuickText()} placeholder="Потратил 500 на обед..." className="flex-1 bg-transparent outline-none text-sm placeholder:opacity-40" />
+            <button onClick={sendQuickText} disabled={textSending || !quickText.trim()} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold disabled:opacity-40">{textSending?'...':'ОК'}</button>
+          </div>
+
           <div onClick={()=>setTab('tracker')} className="glass p-5 cursor-pointer active:scale-[0.98] transition hover:bg-white/10">
-            <p className="text-sm opacity-60">Баланс — нажми для истории →</p>
+            <div className="flex justify-between items-center">
+              <p className="text-sm opacity-60">Баланс — нажми для истории →</p>
+              <div className="flex gap-1 text-[10px]">
+                <button onClick={(e)=>{e.stopPropagation(); setChartMode('week')}} className={`px-2 py-0.5 rounded-full ${chartMode==='week'?'bg-white text-black':'glass'}`}>Неделя</button>
+                <button onClick={(e)=>{e.stopPropagation(); setChartMode('month')}} className={`px-2 py-0.5 rounded-full ${chartMode==='month'?'bg-white text-black':'glass'}`}>Месяц</button>
+              </div>
+            </div>
             <p className="text-3xl font-black">{balance.toLocaleString('ru-RU')} ₽</p>
             <div className="mt-4 h-20 flex gap-1.5 items-end">
-              {last7Expenses.map((v,i)=>{
-                const h = v===0 ? 8 : Math.round((v/maxExpense)*56 + 12) // 12..68px, 0->8px
+              {chartData.map((v,i)=>{
+                const h = v===0 ? 8 : Math.round((v/maxExpense)*56 + 12)
                 return (
                   <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                    <div
-                      title={`${dayLabels[i]}: ${v} ₽`}
-                      style={{height:h}}
-                      className="w-full rounded-t-lg bg-gradient-to-t from-[#8B5CF6] to-[#C084FC] opacity-90 transition-all duration-500"
-                    />
+                    <div title={`${dayLabels[i]}: ${v} ₽`} style={{height:h}} className="w-full rounded-t-lg bg-gradient-to-t from-[#8B5CF6] to-[#C084FC] opacity-90 transition-all duration-500" />
                     <span className="text-[9px] opacity-40 leading-none">{dayLabels[i]}</span>
                   </div>
                 )
               })}
             </div>
-            <p className="text-[10px] opacity-40 mt-1">{last7Expenses.some(v=>v>0) ? `макс ${Math.max(...last7Expenses)} ₽ за день` : 'нет расходов за 7 дней — скажи "потратил 500 на обед"'}</p>
+            <p className="text-[10px] opacity-40 mt-1">{chartData.some(v=>v>0) ? `макс ${Math.max(...chartData)} ₽` : 'нет расходов — добавь через ввод выше'}</p>
+            {/* бюджет */}
+            <div className="mt-3">
+              <div className="flex justify-between text-[10px] opacity-60"><span>Бюджет месяца</span><span>{monthSpent.toLocaleString('ru-RU')} / {BUDGET.toLocaleString('ru-RU')} ₽ {budgetPct}%</span></div>
+              <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-1"><div className={`h-1.5 rounded-full transition-all ${budgetPct>90?'bg-red-500':budgetPct>70?'bg-yellow-400':'bg-gradient-to-r from-[#8B5CF6] to-[#C084FC]'}`} style={{width:`${budgetPct}%`}} /></div>
+            </div>
+            {/* пирог */}
+            {byCat.length>0 && (
+              <div className="mt-3 flex gap-2 flex-wrap">
+                {byCat.map(c=>(
+                  <span key={c.k} className="text-[10px] glass px-2 py-1 rounded-full">{c.k} {c.pct}%</span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div onClick={()=>setTab('calories')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Калории сегодня →</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p><p className="text-[10px] opacity-40 mt-1">{data.calories?.length||0} блюд</p></div>
@@ -182,7 +282,7 @@ export default function App(){
           {photoSending && <p className="text-xs opacity-60 text-center">⏳ Распознаю...</p>}
           {photoResult && (
             <div className="glass p-3 text-xs">
-              {photoResult.error ? <p className="text-red-400">⚠️ {photoResult.error}</p> : <><p className="font-bold">✅ {photoResult.parsed?.type==='receipt' ? `Чек ${photoResult.saved?.shop||''} ${photoResult.saved?.total||''}₽` : photoResult.parsed?.dish ? `${photoResult.parsed.dish} ${photoResult.parsed.kcal} ккал` : 'Готово'}</p><pre className="whitespace-pre-wrap opacity-60 mt-1">{JSON.stringify(photoResult.parsed,null,2).slice(0,300)}</pre>{photoResult.streak?.bonus ? <p className="text-green-400 mt-1">🎁 Бонус +{photoResult.streak.bonus} за стрик 🔥{photoResult.streak.streak}д</p> : null}</>}
+              {photoResult.error ? <p className="text-red-400">⚠️ {photoResult.error}</p> : <><p className="font-bold">✅ {photoResult.parsed?.type==='receipt' ? `Чек ${photoResult.saved?.shop||''} ${photoResult.saved?.total||''}₽` : photoResult.parsed?.dish ? `${photoResult.parsed.dish} ${photoResult.parsed.kcal} ккал` : 'Готово'}</p><pre className="whitespace-pre-wrap opacity-60 mt-1">{JSON.stringify(photoResult.parsed,null,2).slice(0,300)}</pre></>}
               <button onClick={()=>setPhotoResult(null)} className="mt-2 w-full glass py-1 rounded-lg">OK</button>
             </div>
           )}
@@ -194,11 +294,20 @@ export default function App(){
 
       {tab==='tracker' && (
         <div className="space-y-3">
-          <div className="flex items-center gap-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">История расходов/доходов</h2></div>
-          {(data.transactions?.length||0)===0 ? <p className="text-sm opacity-60 glass p-4 text-center">Пока пусто — скажи “потратил 500 на обед”</p> : data.transactions.slice(0,20).map(t=>(
-            <div key={t.id} className="glass p-3 flex justify-between">
-              <div><p className="font-semibold">{t.category}</p><p className="text-xs opacity-60">{t.note} • {new Date(t.created_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'})}</p></div>
-              <p className={`font-black ${t.type==='expense'?'text-red-400':'text-green-400'}`}>{t.type==='expense'?'-':'+'}{t.amount}₽</p>
+          <div className="flex items-center gap-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">История</h2></div>
+          <div className="flex gap-1">
+            {['all','expense','income'].map(f=>(
+              <button key={f} onClick={()=>setTrackerFilter(f)} className={`text-xs px-3 py-1 rounded-full ${trackerFilter===f?'bg-white text-black':'glass'}`}>{f==='all'?'Все':f==='expense'?'Расходы':'Доходы'}</button>
+            ))}
+          </div>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Поиск по категории/заметке..." className="w-full glass p-2 text-sm outline-none" />
+          {filteredTx.length===0 ? <p className="text-sm opacity-60 glass p-4 text-center">Ничего не найдено</p> : filteredTx.slice(0,20).map(t=>(
+            <div key={t.id} className="glass p-3 flex justify-between items-center">
+              <div onClick={()=>setSearch(t.category)} className="flex-1 cursor-pointer"><p className="font-semibold">{t.category}</p><p className="text-xs opacity-60">{t.note} • {new Date(t.created_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'})}</p></div>
+              <div className="flex items-center gap-2">
+                <p className={`font-black ${t.type==='expense'?'text-red-400':'text-green-400'}`}>{t.type==='expense'?'-':'+'}{t.amount}₽</p>
+                <button onClick={()=>delItem(t.type,t.id)} className="text-xs opacity-40 hover:opacity-100">🗑</button>
+              </div>
             </div>
           ))}
         </div>
@@ -208,9 +317,9 @@ export default function App(){
         <div className="space-y-3">
           <div className="flex items-center gap-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">История калорий</h2></div>
           {(data.calories?.length||0)===0 ? <p className="text-sm opacity-60 glass p-4 text-center">Пока пусто — скажи “съел 2 яйца”</p> : data.calories.slice(0,20).map(c=>(
-            <div key={c.id} className="glass p-3 flex justify-between">
+            <div key={c.id} className="glass p-3 flex justify-between items-center">
               <div><p className="font-semibold">{c.dish}</p><p className="text-xs opacity-60">{new Date(c.created_at).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'})} • Б:{c.protein||0} Ж:{c.fat||0} У:{c.carbs||0}</p></div>
-              <p className="font-black text-orange-400">{c.kcal} ккал</p>
+              <div className="flex items-center gap-2"><p className="font-black text-orange-400">{c.kcal} ккал</p><button onClick={()=>delItem('calories',c.id)} className="text-xs opacity-40">🗑</button></div>
             </div>
           ))}
         </div>
@@ -253,7 +362,7 @@ export default function App(){
               <span className={`text-xs px-2 py-1 rounded-full ${n.is_done?'bg-green-500/20 text-green-400':'bg-white/10'}`}>{n.is_done?'✓':'•'}</span>
             </div>
           ))}
-          {data.notes?.filter(n=>n.kind!=='task').length>0 && <><h3 className="text-xs opacity-60 mt-3">Заметки/идеи</h3>{data.notes.filter(n=>n.kind!=='task').slice(0,10).map(n=><div key={n.id} className="glass p-3"><p className="font-semibold">{n.title}</p><p className="text-xs opacity-60">{n.kind}</p></div>)}</>}
+          {data.notes?.filter(n=>n.kind!=='task').length>0 && <><h3 className="text-xs opacity-60 mt-3">Заметки/идеи</h3>{data.notes.filter(n=>n.kind!=='task').slice(0,10).map(n=><div key={n.id} className="glass p-3 flex justify-between"><p className="font-semibold">{n.title}</p><p className="text-xs opacity-60">{n.kind}</p><button onClick={()=>delItem(n.kind,n.id)} className="text-xs opacity-40">🗑</button></div>)}</>}
         </div>
       )}
 

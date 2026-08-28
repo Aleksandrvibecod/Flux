@@ -15,27 +15,19 @@ async function handleCoffeeStreak(user) {
     const { data: st } = await supabase.from('streaks').select('*').eq('user_id', user.id).eq('habit','no_coffee_500').maybeSingle();
     let streak = st?.streak || 0;
     let best = st?.best_streak || 0;
-    let bonus = 0;
     const lastDate = st?.last_date;
     const todayStr = moscowDateStr(0);
     if (hadCoffee) {
       streak = 0;
     } else {
-      // если уже засчитали сегодня — не дублируем
       if (lastDate !== todayStr) {
         streak = (lastDate === moscowDateStr(-1) ? streak : 0) + 1;
-        if (streak >= 3) bonus = 150; // бонус за 3 дня
-        else if (streak >=1) bonus = 50;
         best = Math.max(best, streak);
       }
     }
-    if (st?.id) await supabase.from('streaks').update({ streak, best_streak: best, last_date: todayStr, total_bonus: (st.total_bonus||0)+bonus, updated_at: new Date().toISOString() }).eq('id', st.id);
-    else await supabase.from('streaks').insert({ user_id: user.id, habit:'no_coffee_500', streak, best_streak: best, last_date: todayStr, total_bonus: bonus });
-    if (bonus) {
-      await supabase.from('bonuses').insert({ user_id: user.id, amount: bonus, reason: `streak_${streak}` });
-      await supabase.from('users').update({ bonus_balance: (user.bonus_balance||0)+bonus }).eq('id', user.id);
-    }
-    return { streak, best, bonus };
+    if (st?.id) await supabase.from('streaks').update({ streak, best_streak: best, last_date: todayStr, updated_at: new Date().toISOString() }).eq('id', st.id);
+    else await supabase.from('streaks').insert({ user_id: user.id, habit:'no_coffee_500', streak, best_streak: best, last_date: todayStr });
+    return { streak, best };
   } catch(e){ console.warn('streak fail',e.message); return {streak:0} }
 }
 
@@ -187,6 +179,25 @@ app.get('/analytics', async (req) => {
   const { data: notes } = await supabase.from('notes').select('*').eq('user_id', user.id).gte('created_at', since.toISOString());
   const insights = await generateInsights({ transactions: tx||[], calories: cal||[], notes: notes||[] });
   return { insights: insights.insights, transactions: tx, calories: cal };
+});
+
+app.delete('/transactions/:id', async (req,reply)=>{
+  const uid = req.telegramId; if (!uid) return reply.code(401).send({error:'no id'});
+  const user = await getOrCreateUser(uid);
+  await supabase.from('transactions').delete().eq('id', req.params.id).eq('user_id', user.id);
+  return {ok:true}
+});
+app.delete('/calories/:id', async (req,reply)=>{
+  const uid = req.telegramId; if (!uid) return reply.code(401).send({error:'no id'});
+  const user = await getOrCreateUser(uid);
+  await supabase.from('calories').delete().eq('id', req.params.id).eq('user_id', user.id);
+  return {ok:true}
+});
+app.delete('/notes/:id', async (req,reply)=>{
+  const uid = req.telegramId; if (!uid) return reply.code(401).send({error:'no id'});
+  const user = await getOrCreateUser(uid);
+  await supabase.from('notes').delete().eq('id', req.params.id).eq('user_id', user.id);
+  return {ok:true}
 });
 
 // helpers для московской даты (22:00 МСК)
