@@ -6,34 +6,42 @@ export default function App(){
   const [tab, setTab] = useState('home')
   const [data, setData] = useState({ transactions:[], calories:[], notes:[], streaks:[], goals:[] })
   const [loading, setLoading] = useState(true)
-  const getTgId = ()=> {
+  const [tgId, setTgId] = useState(()=>{
     const w = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
     if (w) return w
     const p = new URLSearchParams(window.location.search)
     return Number(p.get('telegram_id') || p.get('tgId') || 0) || 12345
-  }
-  const tgId = getTgId()
+  })
   const isAdmin = tgId === 1072185171
   const [premium, setPremium] = useState({ is_premium:false, expires_at:null, days_left:0 })
   const [adminStats, setAdminStats] = useState(null)
 
   useEffect(()=>{
+    // Telegram WebApp может инициализироваться с задержкой
+    try{ window.Telegram?.WebApp?.ready?.(); }catch{}
+    const realId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
+    if (realId && realId !== tgId) setTgId(realId)
+  },[])
+
+  useEffect(()=>{
+    if (!tgId || tgId===12345 && !window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
+      // подождем Telegram, но все равно грузим для дебага
+    }
     setLoading(true)
     Promise.all([
       fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()),
       fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).catch(()=>({is_premium:false}))
     ]).then(([h,p])=>{ setData(h); setPremium(p); setLoading(false)}).catch(()=>setLoading(false))
-    if (isAdmin) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
-    // рефералка: если ?ref= или ?start= в URL
+    if (tgId===1072185171) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
     const ref = new URLSearchParams(window.location.search).get('ref') || new URLSearchParams(window.location.search).get('start')
     if (ref && ref.startsWith('ref')) fetch(`${API}/referral/apply`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ code: ref, telegram_id: tgId }) }).catch(()=>{})
-  },[])
+  },[tgId])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
   const refresh = ()=> {
-    fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': tgId } }).then(r=>r.json()).then(setData).catch(()=>{})
+    fetch(`${API}/history?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).then(setData).catch(()=>{})
     fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).then(setPremium).catch(()=>{})
-    if (isAdmin) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
+    if (tgId===1072185171) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
   }
   const [paying, setPaying] = useState(null)
   const [editingBudget, setEditingBudget] = useState(false)
@@ -480,18 +488,24 @@ export default function App(){
       {tab==='settings' && (
         <div className="space-y-4">
           <h2 className="font-bold">⚙️ Подписка</h2>
-          {isAdmin && adminStats && (
+          {isAdmin && (
             <div className="glass p-4 border border-yellow-500/30 bg-yellow-500/10">
-              <p className="text-xs font-bold text-yellow-400">👑 Админ — видно только тебе</p>
-              <p className="text-lg font-black">👥 {adminStats.total} пользователей</p>
-              <div className="flex gap-2 text-xs opacity-80 mt-1">
-                <span className="glass px-2 py-1">💎 {adminStats.premium} premium</span>
-                <span className="glass px-2 py-1">🆓 {adminStats.free} free</span>
-              </div>
-              <div className="flex gap-2 text-xs opacity-60 mt-2">
-                <span>🆕 Сегодня: {adminStats.today}</span>
-                <span>• Неделя: {adminStats.week}</span>
-              </div>
+              <p className="text-xs font-bold text-yellow-400">👑 Админ — видно только тебе (ID {tgId})</p>
+              {adminStats ? (
+                <>
+                  <p className="text-lg font-black">👥 {adminStats.total} пользователей</p>
+                  <div className="flex gap-2 text-xs opacity-80 mt-1">
+                    <span className="glass px-2 py-1">💎 {adminStats.premium} premium</span>
+                    <span className="glass px-2 py-1">🆓 {adminStats.free} free</span>
+                  </div>
+                  <div className="flex gap-2 text-xs opacity-60 mt-2">
+                    <span>🆕 Сегодня: {adminStats.today}</span>
+                    <span>• Неделя: {adminStats.week}</span>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs opacity-60 mt-2">Загрузка... Если долго — проверь что открыл через Telegram (а не браузер) и что бэкенд обновлен</p>
+              )}
             </div>
           )}
           <div className="glass p-4">
