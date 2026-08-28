@@ -167,7 +167,19 @@ app.get('/history', async (req, reply) => {
   // streaks & bonuses
   const { data: streaks } = await supabase.from('streaks').select('*').eq('user_id', user.id);
   const { data: bonuses } = await supabase.from('bonuses').select('*').eq('user_id', user.id).order('created_at',{ascending:false}).limit(10);
-  return { transactions: tx.data, calories: cal.data, notes: notes.data, is_premium: user.is_premium, streaks, bonuses, bonus_balance: user.bonus_balance||0 };
+  return { transactions: tx.data, calories: cal.data, notes: notes.data, is_premium: user.is_premium, monthly_budget: user.monthly_budget || 20000, streaks, bonuses, bonus_balance: user.bonus_balance||0 };
+});
+
+// бюджет месяца: GET/POST /budget
+app.get('/budget', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  return { budget: user.monthly_budget || 20000 };
+});
+app.post('/budget', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  const b = Math.max(1000, Math.min(1000000, Number(req.body?.budget || req.body?.amount || 20000)));
+  await supabase.from('users').update({ monthly_budget: b }).eq('id', user.id);
+  return { budget: b };
 });
 
 app.get('/analytics', async (req) => {

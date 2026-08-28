@@ -114,3 +114,4 @@ create policy "allow all for anon" on bonuses for all using (true) with check (t
 alter table users add column if not exists message_used_today int default 0;
 alter table users add column if not exists message_limit_date date default current_date;
 alter table users add column if not exists bonus_balance int default 0;
+alter table users add column if not exists monthly_budget int default 20000;

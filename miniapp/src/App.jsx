@@ -29,6 +29,16 @@ export default function App(){
     fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).then(setPremium).catch(()=>{})
   }
   const [paying, setPaying] = useState(null)
+  const [editingBudget, setEditingBudget] = useState(false)
+  const [budgetInput, setBudgetInput] = useState('')
+  const saveBudget = async ()=>{
+    const v = Number(String(budgetInput).replace(/\D/g,'')); if (!v) return
+    try{
+      await fetch(`${API}/budget`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ budget: v }) }).then(r=>r.json())
+      setEditingBudget(false); setBudgetInput(''); refresh()
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
+    }catch{}
+  }
   const buyPlan = async (plan)=>{
     setPaying(plan)
     try{
@@ -175,8 +185,8 @@ export default function App(){
     })
   },[chartMode])
 
-  // бюджет 20к
-  const BUDGET = 20000
+   // бюджет — берем из Supabase, можно менять по клику на историю
+  const BUDGET = data.monthly_budget || 20000
   const monthSpent = React.useMemo(()=>{
     const now=new Date(); return (data.transactions||[]).filter(t=>t.type==='expense' && new Date(t.created_at).getMonth()===now.getMonth()).reduce((s,t)=>s+Number(t.amount||0),0)
   },[data.transactions])
@@ -255,11 +265,18 @@ export default function App(){
               })}
             </div>
             <p className="text-[10px] opacity-40 mt-1">{chartData.some(v=>v>0) ? `макс ${Math.max(...chartData)} ₽` : 'нет расходов — добавь через ввод выше'}</p>
-            {/* бюджет */}
-            <div className="mt-3">
-              <div className="flex justify-between text-[10px] opacity-60"><span>Бюджет месяца</span><span>{monthSpent.toLocaleString('ru-RU')} / {BUDGET.toLocaleString('ru-RU')} ₽ {budgetPct}%</span></div>
+            {/* бюджет — клик для выбора */}
+            <div className="mt-3" onClick={(e)=>{e.stopPropagation(); setBudgetInput(String(BUDGET)); setEditingBudget(true)}}>
+              <div className="flex justify-between text-[10px] opacity-60"><span>Бюджет месяца — нажми чтобы изменить →</span><span>{monthSpent.toLocaleString('ru-RU')} / {BUDGET.toLocaleString('ru-RU')} ₽ {budgetPct}%</span></div>
               <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-1"><div className={`h-1.5 rounded-full transition-all ${budgetPct>90?'bg-red-500':budgetPct>70?'bg-yellow-400':'bg-gradient-to-r from-[#8B5CF6] to-[#C084FC]'}`} style={{width:`${budgetPct}%`}} /></div>
             </div>
+            {editingBudget && (
+              <div className="glass p-3 flex gap-2 items-center">
+                <input value={budgetInput} onChange={e=>setBudgetInput(e.target.value)} type="number" placeholder="20000" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-sm outline-none" autoFocus />
+                <button onClick={saveBudget} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold">ОК</button>
+                <button onClick={()=>setEditingBudget(false)} className="px-3 py-1.5 glass rounded-full text-sm">✕</button>
+              </div>
+            )}
             {/* пирог */}
             {byCat.length>0 && (
               <div className="mt-3 flex gap-2 flex-wrap">
@@ -295,6 +312,18 @@ export default function App(){
       {tab==='tracker' && (
         <div className="space-y-3">
           <div className="flex items-center gap-2"><button onClick={()=>setTab('home')} className="text-xs glass px-3 py-1">← Назад</button><h2 className="font-bold">История</h2></div>
+          <div onClick={()=>{setBudgetInput(String(BUDGET)); setEditingBudget(true)}} className="glass p-3 cursor-pointer active:scale-[0.98] transition">
+            <div className="flex justify-between text-xs"><span>Бюджет месяца — изменить →</span><span className="font-bold">{monthSpent.toLocaleString('ru-RU')} / {BUDGET.toLocaleString('ru-RU')} ₽</span></div>
+            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-2"><div className={`h-1.5 rounded-full ${budgetPct>90?'bg-red-500':budgetPct>70?'bg-yellow-400':'bg-gradient-to-r from-[#8B5CF6] to-[#C084FC]'}`} style={{width:`${budgetPct}%`}} /></div>
+            <p className="text-[10px] opacity-40 mt-1">{budgetPct}% израсходовано • нажми чтобы задать свой лимит</p>
+          </div>
+          {editingBudget && (
+            <div className="glass p-3 flex gap-2">
+              <input value={budgetInput} onChange={e=>setBudgetInput(e.target.value)} type="number" placeholder="20000" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-sm outline-none" autoFocus />
+              <button onClick={saveBudget} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold">ОК</button>
+              <button onClick={()=>setEditingBudget(false)} className="px-3 py-1.5 glass rounded-full text-sm">✕</button>
+            </div>
+          )}
           <div className="flex gap-1">
             {['all','expense','income'].map(f=>(
               <button key={f} onClick={()=>setTrackerFilter(f)} className={`text-xs px-3 py-1 rounded-full ${trackerFilter===f?'bg-white text-black':'glass'}`}>{f==='all'?'Все':f==='expense'?'Расходы':'Доходы'}</button>
