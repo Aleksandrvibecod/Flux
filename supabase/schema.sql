@@ -90,6 +90,25 @@ create table if not exists bonuses (
   created_at timestamptz default now()
 );
 
+-- Цели-копилки
+create table if not exists goals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references users(id) on delete cascade not null,
+  title text not null,
+  target_amount numeric(12,2) not null,
+  current_amount numeric(12,2) default 0,
+  deadline date,
+  created_at timestamptz default now()
+);
+-- Рефералка
+create table if not exists referrals (
+  id uuid primary key default gen_random_uuid(),
+  referrer_id uuid references users(id) not null,
+  referred_id uuid references users(id) not null unique,
+  bonus_days int default 7,
+  created_at timestamptz default now()
+);
+
 -- Включи RLS и разреши всё для service_role (backend использует service_key)
 alter table users enable row level security;
 alter table transactions enable row level security;
@@ -99,6 +118,8 @@ alter table reminders enable row level security;
 alter table subscriptions enable row level security;
 alter table streaks enable row level security;
 alter table bonuses enable row level security;
+alter table goals enable row level security;
+alter table referrals enable row level security;
 
 -- Политики для anon (через backend — service_role обходит RLS, но для Mini App через anon нужно)
 create policy "allow all for anon" on users for all using (true) with check (true);
@@ -109,9 +130,12 @@ create policy "allow all for anon" on reminders for all using (true) with check 
 create policy "allow all for anon" on subscriptions for all using (true) with check (true);
 create policy "allow all for anon" on streaks for all using (true) with check (true);
 create policy "allow all for anon" on bonuses for all using (true) with check (true);
+create policy "allow all for anon" on goals for all using (true) with check (true);
+create policy "allow all for anon" on referrals for all using (true) with check (true);
 
 -- докидываем колонки если база уже создана
 alter table users add column if not exists message_used_today int default 0;
 alter table users add column if not exists message_limit_date date default current_date;
 alter table users add column if not exists bonus_balance int default 0;
 alter table users add column if not exists monthly_budget int default 20000;
+alter table users add column if not exists referral_code text unique;

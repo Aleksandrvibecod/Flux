@@ -138,6 +138,19 @@ app.post('/parse', async (req, reply) => {
       }
       saved = { items, total: parsed.total, shop: parsed.shop };
       bonusInfo = await handleCoffeeStreak(user);
+    } else if (parsed.type === 'goal') {
+      const title = parsed.title || text.slice(0,40) || 'Цель';
+      const target = Number(parsed.target_amount || parsed.amount || 50000);
+      // если уже есть такая цель — считаем "отложил" как пополнение
+      const { data: ex } = await supabase.from('goals').select('*').eq('user_id', user.id).ilike('title', `%${title}%`).maybeSingle();
+      if (ex && parsed.amount && !parsed.target_amount) {
+        const cur = Number(ex.current_amount) + Number(parsed.amount);
+        const { data } = await supabase.from('goals').update({ current_amount: cur }).eq('id', ex.id).select().single();
+        saved = data;
+      } else {
+        const { data } = await supabase.from('goals').insert({ user_id: user.id, title, target_amount: target }).select().single();
+        saved = data;
+      }
     } else if (parsed.type === 'note' || parsed.type === 'task' || parsed.type === 'idea') {
       const kind = parsed.kind || 'note';
       const { data } = await supabase.from('notes').insert({
@@ -166,10 +179,10 @@ app.get('/history', async (req, reply) => {
     supabase.from('calories').select('*').eq('user_id', user.id).gte('created_at', since.toISOString()).order('created_at', {ascending:false}).limit(50),
     supabase.from('notes').select('*').eq('user_id', user.id).order('created_at', {ascending:false}).limit(50),
   ]);
-  // streaks & bonuses
+  // streaks & goals
   const { data: streaks } = await supabase.from('streaks').select('*').eq('user_id', user.id);
-  const { data: bonuses } = await supabase.from('bonuses').select('*').eq('user_id', user.id).order('created_at',{ascending:false}).limit(10);
-  return { transactions: tx.data, calories: cal.data, notes: notes.data, is_premium: user.is_premium, monthly_budget: user.monthly_budget || 20000, streaks, bonuses, bonus_balance: user.bonus_balance||0 };
+  const { data: goals } = await supabase.from('goals').select('*').eq('user_id', user.id).order('created_at');
+  return { transactions: tx.data, calories: cal.data, notes: notes.data, is_premium: user.is_premium, monthly_budget: user.monthly_budget || 20000, streaks, goals: goals||[], referral_code: user.referral_code, bonus_balance: user.bonus_balance||0 };
 });
 
 // бюджет месяца: GET/POST /budget
@@ -193,6 +206,93 @@ app.post('/budget', async (req,reply)=>{
     app.log.error(e);
     return reply.code(500).send({ error: e.message });
   }
+});
+
+// цели-копилки
+app.get('/goals', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  const { data } = await supabase.from('goals').select('*').eq('user_id', user.id).order('created_at');
+  return { goals: data || [] };
+});
+app.post('/goals', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  const title = (req.body?.title || '').trim().slice(0,60) || 'Цель';
+  const target = Math.max(100, Number(req.body?.target_amount || 10000));
+  const { data, error } = await supabase.from('goals').insert({ user_id: user.id, title, target_amount: target }).select().single();
+  if (error) return reply.code(400).send({error:error.message});
+  return data;
+});
+app.post('/goals/:id/add', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  const amount = Number(req.body?.amount || 0); if (!amount) return reply.code(400).send({error:'need amount'});
+  const { data: g } = await supabase.from('goals').select('*').eq('id', req.params.id).eq('user_id', user.id).single();
+  if (!g) return reply.code(404).send({error:'not found'});
+  const cur = Number(g.current_amount) + amount;
+  const { data } = await supabase.from('goals').update({ current_amount: cur }).eq('id', g.id).select().single();
+  return data;
+});
+app.delete('/goals/:id', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  await supabase.from('goals').delete().eq('id', req.params.id).eq('user_id', user.id);
+  return {ok:true};
+});
+
+// рефералка
+app.get('/referral/stats', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  if (!user.referral_code) {
+    const code='ref'+user.telegram_id.toString(36);
+    await supabase.from('users').update({referral_code:code}).eq('id',user.id);
+    user.referral_code=code;
+  }
+  const { count } = await supabase.from('referrals').select('*', {count:'exact', head:true}).eq('referrer_id', user.id);
+  const botUsername = (process.env.BOT_USERNAME || '').replace('@','');
+  const link = botUsername ? `https://t.me/${botUsername}?start=${user.referral_code}` : `ref:${user.referral_code}`;
+  return { code: user.referral_code, link, invited: count||0 };
+});
+app.post('/referral/apply', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  const code = (req.body?.code || '').trim();
+  if (!code) return reply.code(400).send({error:'need code'});
+  if (code === user.referral_code) return reply.code(400).send({error:'self'});
+  const { data: refUser } = await supabase.from('users').select('id').eq('referral_code', code).maybeSingle();
+  if (!refUser) return reply.code(404).send({error:'code not found'});
+  const { data: existing } = await supabase.from('referrals').select('id').eq('referred_id', user.id).maybeSingle();
+  if (existing) return reply.code(400).send({error:'already referred'});
+  await supabase.from('referrals').insert({ referrer_id: refUser.id, referred_id: user.id, bonus_days:7 });
+  // +7д обоим
+  for (const uid of [user.id, refUser.id]) {
+    const { data: cur } = await supabase.from('subscriptions').select('expires_at').eq('user_id', uid).eq('status','active').gt('expires_at', new Date().toISOString()).order('expires_at',{ascending:false}).limit(1).maybeSingle();
+    let base = cur?.expires_at ? new Date(cur.expires_at) : new Date();
+    if (base < new Date()) base = new Date();
+    base.setDate(base.getDate()+7);
+    await supabase.from('users').update({is_premium:true}).eq('id', uid);
+    await supabase.from('subscriptions').insert({user_id: uid, provider:'referral', status:'active', expires_at: base.toISOString()});
+  }
+  return {ok:true, bonus_days:7};
+});
+
+// ИИ советник
+app.post('/advisor/chat', async (req,reply)=>{
+  const user = await getOrCreateUser(req.telegramId);
+  const q = (req.body?.message || '').trim(); if (!q) return reply.code(400).send({error:'need message'});
+  const since = new Date(); since.setDate(since.getDate()-30);
+  const [{data:tx},{data:goals}] = await Promise.all([
+    supabase.from('transactions').select('type,amount,category,created_at').eq('user_id', user.id).gte('created_at', since.toISOString()).limit(100),
+    supabase.from('goals').select('title,target_amount,current_amount').eq('user_id', user.id).limit(10)
+  ]);
+  const ctx = `Транзакции 30д: ${JSON.stringify(tx?.slice(0,30))}\nЦели: ${JSON.stringify(goals)}\nБаланс: ${tx?.reduce((s,t)=>s+(t.type==='income'?t.amount:-t.amount),0)}`;
+  const prompt = `Ты — финансовый советник FLUX. Отвечай кратко, по-русски, дружелюбно, 3-5 предложений. Контекст: ${ctx}\nВопрос: ${q}`;
+  const { generateInsights } = await import('./gemini.js');
+  // переиспользуем Gemini chat
+  const { parseWithGemini } = await import('./gemini.js');
+  // простой chat через Gemini
+  const OpenAI = (await import('openai')).default;
+  const client = new OpenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY, baseURL: process.env.GEMINI_BASE_URL || 'https://openrouter.ai/api/v1' });
+  const model = process.env.GEMINI_MODEL || 'google/gemini-2.5-flash';
+  const res = await client.chat.completions.create({ model, messages:[{role:'user', content: prompt}], temperature:0.7, max_tokens:500 });
+  const answer = res.choices[0]?.message?.content || 'Не смог ответить';
+  return { answer };
 });
 
 app.get('/analytics', async (req) => {

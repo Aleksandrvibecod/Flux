@@ -4,7 +4,7 @@ const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'
 
 export default function App(){
   const [tab, setTab] = useState('home')
-  const [data, setData] = useState({ transactions:[], calories:[], notes:[], streaks:[] })
+  const [data, setData] = useState({ transactions:[], calories:[], notes:[], streaks:[], goals:[] })
   const [loading, setLoading] = useState(true)
   const getTgId = ()=> {
     const w = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
@@ -24,6 +24,9 @@ export default function App(){
       fetch(`${API}/premium/status?telegram_id=${tgId}`, { headers: { 'x-telegram-id': String(tgId) } }).then(r=>r.json()).catch(()=>({is_premium:false}))
     ]).then(([h,p])=>{ setData(h); setPremium(p); setLoading(false)}).catch(()=>setLoading(false))
     if (isAdmin) fetch(`${API}/admin/stats?telegram_id=${tgId}`, { headers:{'x-telegram-id': String(tgId)} }).then(r=>r.json()).then(setAdminStats).catch(()=>{})
+    // рефералка: если ?ref= или ?start= в URL
+    const ref = new URLSearchParams(window.location.search).get('ref') || new URLSearchParams(window.location.search).get('start')
+    if (ref && ref.startsWith('ref')) fetch(`${API}/referral/apply`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ code: ref, telegram_id: tgId }) }).catch(()=>{})
   },[])
 
   const balance = data.transactions?.reduce((s,t)=> s + (t.type==='income'? Number(t.amount) : -Number(t.amount)), 0) || 0
@@ -78,19 +81,56 @@ export default function App(){
   }
 
   // фильтры и поиск
-  const [trackerFilter, setTrackerFilter] = useState('all') // all/expense/income
+  const [trackerFilter, setTrackerFilter] = useState('all')
   const [search, setSearch] = useState('')
-  const [chartMode, setChartMode] = useState('week') // week/month
+  const [chartMode, setChartMode] = useState('week')
   const [onboardDismissed, setOnboardDismissed] = useState(()=> localStorage.getItem('flux_onboard')==='1')
 
   const delItem = async (type, id)=>{
     if (!confirm('Удалить?')) return
-    const map = { expense:'transactions', income:'transactions', calories:'calories', task:'notes', note:'notes' }
     const path = type==='calories' ? 'calories' : type==='task' || type==='note' ? 'notes' : 'transactions'
     try{
       await fetch(`${API}/${path}/${id}?telegram_id=${tgId}`, { method:'DELETE', headers:{'x-telegram-id': String(tgId)} })
       await refresh()
     }catch{}
+  }
+
+  // цели
+  const [newGoal, setNewGoal] = useState({title:'', amount:''})
+  const createGoal = async ()=>{
+    if (!newGoal.title.trim() || !newGoal.amount) return
+    await fetch(`${API}/goals`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ title: newGoal.title, target_amount: Number(newGoal.amount), telegram_id: tgId }) }).then(r=>r.json())
+    setNewGoal({title:'', amount:''}); refresh()
+  }
+  const addToGoal = async (id, delta)=>{
+    await fetch(`${API}/goals/${id}/add`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ amount: delta, telegram_id: tgId }) }).then(r=>r.json())
+    refresh()
+  }
+
+  // рефералка
+  const [refStats, setRefStats] = useState(null)
+  useEffect(()=>{ fetch(`${API}/referral/stats?telegram_id=${tgId}`, {headers:{'x-telegram-id': String(tgId)}}).then(r=>r.json()).then(setRefStats).catch(()=>{}) },[])
+  const shareRef = ()=>{
+    const link = refStats?.link || `https://t.me/${(window.Telegram?.WebApp?.initDataUnsafe?.user?.username||'flux')}`
+    const text = `FLUX — трекер всего. Перейди по моей ссылке и получи +7д Premium: ${link}`
+    if (navigator.share) navigator.share({title:'FLUX', text, url: link})
+    else if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`)
+    else window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}`, '_blank')
+  }
+
+  // советник
+  const [advQ, setAdvQ] = useState('')
+  const [advA, setAdvA] = useState('')
+  const [advLoading, setAdvLoading] = useState(false)
+  const askAdvisor = async ()=>{
+    if (!advQ.trim()) return
+    setAdvLoading(true); setAdvA('')
+    try{
+      const res = await fetch(`${API}/advisor/chat`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ message: advQ, telegram_id: tgId }) }).then(r=>r.json())
+      if (res.error) throw new Error(res.error)
+      setAdvA(res.answer)
+    }catch(e){ setAdvA('⚠️ '+e.message) }
+    finally{ setAdvLoading(false) }
   }
 
   // голос
@@ -154,28 +194,26 @@ export default function App(){
     finally{ setPhotoSending(false) }
   }
 
-    // динамика столбиков — неделя Пн-Вс (МСК)
+   // динамика столбиков — неделя Пн-Вс (МСК)
   const moscowDateStr = (offset=0)=> new Date(Date.now()+offset*86400000).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
   const toMoscowDate = (iso)=> new Date(iso).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
-  const moscowWeekday = ()=> new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Moscow'})).getDay() // 0 Вс
+  const moscowWeekday = ()=> new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Moscow'})).getDay()
   const mondayOffset = ()=> {
     const wd = moscowWeekday();
-    return wd===0 ? -6 : 1 - wd; // сдвиг до понедельника
+    return wd===0 ? -6 : 1 - wd;
   }
   const last7Expenses = React.useMemo(()=>{
     const monOff = mondayOffset();
     return Array.from({length:7},(_,k)=>{
-      const offset = monOff + k // Пн(0) .. Вс(6)
+      const offset = monOff + k
       const key = moscowDateStr(offset)
       return (data.transactions||[])
         .filter(t=> t.type==='expense' && toMoscowDate(t.created_at)===key)
         .reduce((s,t)=> s + Number(t.amount||0), 0)
     })
   },[data.transactions])
-  // для месяца агрегируем по неделям
   const monthlyExpenses = React.useMemo(()=>{
     const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
     const weeks = [0,0,0,0,0]
     ;(data.transactions||[]).filter(t=>t.type==='expense').forEach(t=>{
       const d = new Date(t.created_at)
@@ -197,13 +235,12 @@ export default function App(){
     })
   },[chartMode])
 
-   // бюджет — берем из Supabase, можно менять по клику на историю
+   // бюджет
   const BUDGET = data.monthly_budget || 20000
   const monthSpent = React.useMemo(()=>{
     const now=new Date(); return (data.transactions||[]).filter(t=>t.type==='expense' && new Date(t.created_at).getMonth()===now.getMonth()).reduce((s,t)=>s+Number(t.amount||0),0)
   },[data.transactions])
   const budgetPct = Math.min(100, Math.round(monthSpent/BUDGET*100))
-  // пирог по категориям
   const byCat = React.useMemo(()=>{
     const m={}; (data.transactions||[]).filter(t=>t.type==='expense').forEach(t=>{ const k=t.category||'прочее'; m[k]=(m[k]||0)+Number(t.amount||0) })
     const total = Object.values(m).reduce((a,b)=>a+b,0) || 1
@@ -250,7 +287,6 @@ export default function App(){
 
       {tab==='home' && !loading && (
         <div className="space-y-4">
-          {/* быстрый ввод текста */}
           <div className="glass p-3 flex gap-2">
             <input value={quickText} onChange={e=>setQuickText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendQuickText()} placeholder="Потратил 500 на обед..." className="flex-1 bg-transparent outline-none text-sm placeholder:opacity-40" />
             <button onClick={sendQuickText} disabled={textSending || !quickText.trim()} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold disabled:opacity-40">{textSending?'...':'ОК'}</button>
@@ -277,7 +313,6 @@ export default function App(){
               })}
             </div>
             <p className="text-[10px] opacity-40 mt-1">{chartData.some(v=>v>0) ? `макс ${Math.max(...chartData)} ₽` : 'нет расходов — добавь через ввод выше'}</p>
-            {/* бюджет — клик для выбора */}
             <div className="mt-3" onClick={(e)=>{e.stopPropagation(); setBudgetInput(String(BUDGET)); setEditingBudget(true)}}>
               <div className="flex justify-between text-[10px] opacity-60"><span>Бюджет месяца — нажми чтобы изменить →</span><span>{monthSpent.toLocaleString('ru-RU')} / {BUDGET.toLocaleString('ru-RU')} ₽ {budgetPct}%</span></div>
               <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-1"><div className={`h-1.5 rounded-full transition-all ${budgetPct>90?'bg-red-500':budgetPct>70?'bg-yellow-400':'bg-gradient-to-r from-[#8B5CF6] to-[#C084FC]'}`} style={{width:`${budgetPct}%`}} /></div>
@@ -289,7 +324,6 @@ export default function App(){
                 <button onClick={()=>setEditingBudget(false)} className="shrink-0 w-8 h-8 flex items-center justify-center glass rounded-full text-sm">✕</button>
               </div>
             )}
-            {/* пирог */}
             {byCat.length>0 && (
               <div className="mt-3 flex gap-2 flex-wrap">
                 {byCat.map(c=>(
@@ -298,6 +332,42 @@ export default function App(){
               </div>
             )}
           </div>
+
+          {/* цели */}
+          <div className="glass p-4 space-y-2">
+            <div className="flex justify-between items-center"><p className="text-sm font-bold">🎯 Цели-копилки</p><span className="text-xs opacity-60">{data.goals?.length||0}</span></div>
+            {(data.goals||[]).length===0 ? <p className="text-xs opacity-60">Нет целей — создай “хочу айфон 80к”</p> : (data.goals||[]).slice(0,3).map(g=>{
+              const pct = Math.min(100, Math.round(Number(g.current_amount)/Number(g.target_amount)*100))
+              return (
+                <div key={g.id} className="glass p-3">
+                  <div className="flex justify-between text-sm"><span className="font-semibold">{g.title}</span><span className="opacity-60">{Number(g.current_amount).toLocaleString('ru-RU')} / {Number(g.target_amount).toLocaleString('ru-RU')} ₽</span></div>
+                  <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-1"><div className="h-1.5 bg-gradient-to-r from-green-400 to-emerald-500" style={{width:`${pct}%`}} /></div>
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={()=>addToGoal(g.id, 1000)} className="text-xs glass px-2 py-1">+1к</button>
+                    <button onClick={()=>addToGoal(g.id, 5000)} className="text-xs glass px-2 py-1">+5к</button>
+                    <button onClick={async()=>{ if(confirm('Удалить?')){ await fetch(`${API}/goals/${g.id}?telegram_id=${tgId}`,{method:'DELETE', headers:{'x-telegram-id': String(tgId)}}); refresh() }}} className="text-xs opacity-40 ml-auto">🗑</button>
+                  </div>
+                </div>
+              )
+            })}
+            <div className="flex gap-2">
+              <input value={newGoal.title} onChange={e=>setNewGoal({...newGoal, title:e.target.value})} placeholder="Название" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-xs outline-none" />
+              <input value={newGoal.amount} onChange={e=>setNewGoal({...newGoal, amount:e.target.value})} placeholder="80000" type="number" className="w-24 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-xs outline-none" />
+              <button onClick={createGoal} className="px-3 py-1.5 btn-gradient rounded-lg text-xs font-bold">+</button>
+            </div>
+            <p className="text-[10px] opacity-40">Скажи: “хочу на отпуск 80к” или “отложил 5к на айфон”</p>
+          </div>
+
+          {/* советник */}
+          <div className="glass p-4 space-y-2">
+            <p className="text-sm font-bold">🤖 ИИ-советник</p>
+            <div className="flex gap-2">
+              <input value={advQ} onChange={e=>setAdvQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&askAdvisor()} placeholder="Почему я перетратил?" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm outline-none" />
+              <button onClick={askAdvisor} disabled={advLoading} className="px-4 py-2 btn-gradient rounded-lg text-sm font-bold disabled:opacity-40">{advLoading?'...':'Спросить'}</button>
+            </div>
+            {advA && <div className="glass p-3 text-sm whitespace-pre-wrap">{advA}</div>}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div onClick={()=>setTab('calories')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Калории сегодня →</p><p className="text-xl font-bold">{data.calories?.reduce((s,c)=>s+c.kcal,0)||0} ккал</p><p className="text-[10px] opacity-40 mt-1">{data.calories?.length||0} блюд</p></div>
             <div onClick={()=>setTab('tasks')} className="glass p-4 cursor-pointer active:scale-[0.97] transition hover:bg-white/10"><p className="text-xs opacity-60">Задач →</p><p className="text-xl font-bold">{data.notes?.filter(n=>n.kind==='task').length||0}</p><p className="text-[10px] opacity-40 mt-1">нажми для списка</p></div>
@@ -454,6 +524,13 @@ export default function App(){
           ))}
           <p className="text-[10px] opacity-40 text-center">Оплата Stars через Telegram • чек в чате • после оплаты Premium включится автоматом</p>
           <button onClick={refresh} className="w-full text-xs glass py-2">🔄 Обновить статус</button>
+          <div className="glass p-4 space-y-2">
+            <p className="text-sm font-bold">🎁 Рефералка — +7д каждому</p>
+            <p className="text-xs opacity-60">Пригласи друга по ссылке, вы оба получите 7д Premium</p>
+            <div className="glass p-2 text-xs break-all">{refStats?.link || 'загрузка...'}</div>
+            <button onClick={shareRef} className="w-full btn-gradient py-2 rounded-xl text-sm font-bold">Поделиться ссылкой</button>
+            <p className="text-xs opacity-60 text-center">Приглашено: {refStats?.invited||0}</p>
+          </div>
           <a
             href="https://t.me/p0dp1vas"
             onClick={(e)=>{ e.preventDefault(); const url='https://t.me/p0dp1vas'; if(window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(url); else if(window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(url); else window.open(url,'_blank'); }}

@@ -19,9 +19,17 @@ export const supabase = supabaseUrl && supabaseKey
 // helper: получить или создать юзера по telegram_id
 export async function getOrCreateUser(telegram_id, { username, first_name } = {}) {
   let { data } = await supabase.from('users').select('*').eq('telegram_id', telegram_id).single();
-  if (data) return data;
+  if (data) {
+    if (!data.referral_code) {
+      const code = 'ref' + telegram_id.toString(36);
+      await supabase.from('users').update({ referral_code: code }).eq('id', data.id);
+      data.referral_code = code;
+    }
+    return data;
+  }
+  const code = 'ref' + telegram_id.toString(36);
   const { data: created, error } = await supabase.from('users').insert({
-    telegram_id, username, first_name
+    telegram_id, username, first_name, referral_code: code
   }).select().single();
   if (error) throw error;
   return created;

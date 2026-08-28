@@ -18,8 +18,10 @@ export async function parseWithGemini({ text, audioBase64, audioMime = 'audio/og
 - calories: {"type":"calories","dish":string,"kcal":number,"protein":number,"fat":number,"carbs":number}
 - note: {"type":"note","kind":"task|idea|note","title":string,"content":string}
 - reminder: {"type":"reminder","text":string,"remind_at":"ISO8601"}
+- goal: {"type":"goal","title":string,"target_amount":number}
 Если не распознал — {"type":"note","kind":"note","title":text,"content":""}
-Категории расходов строго из списка. Сумму ищи как число. Дату парси как Europe/Moscow.`;
+Категории расходов строго из списка. Сумму ищи как число. Дату парси как Europe/Moscow.
+Примеры: "хочу на айфон 80к" -> goal, "отложил 5к на отпуск" -> {"type":"goal","title":"отпуск","target_amount":5000} или expense если без цели`;
 
   // Если есть аудио — сначала транскрибируем через Whisper (надежнее чем Gemini audio через OpenRouter)
   // Логи в Railway показывали: Audio inp... 400 от Google AI Studio + 429 gemma — прямой Gemini audio на ogg сломан

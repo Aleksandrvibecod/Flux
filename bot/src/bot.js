@@ -11,10 +11,17 @@ const BACKEND = (process.env.BACKEND_URL || 'http://localhost:3000').trim();
 const MINIAPP_URL = (process.env.MINIAPP_URL || 'https://your-vercel.app').trim();
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || '1072185171').split(',').map(s=>Number(s.trim())).filter(Boolean);
 
-// /start
+// /start — поддерживает рефералку /start refXXX
 bot.command('start', async (ctx) => {
+  const payload = (ctx.message.text || '').split(' ')[1] || '';
+  if (payload.startsWith('ref')) {
+    try {
+      const r = await fetch(`${BACKEND}/referral/apply`, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ code: payload, telegram_id: ctx.from.id }) }).then(x=>x.json());
+      if (r.ok) await ctx.reply('🎁 Бонус +7д Premium за приглашение! Продлится автоматом.');
+    } catch {}
+  }
   await ctx.reply(
-    '⚡️ Flux — твой трекер всего\n\nГолосом скажи: "потратил 500 на обед", "съел 2 яйца", "напомни завтра в 10 позвонить врачу"',
+    '⚡️ Flux — твой трекер всего\n\nГолосом скажи: "потратил 500 на обед", "съел 2 яйца", "напомни завтра в 10 позвонить врачу"\n\nЦели: "хочу айфон 80к" или "отложил 5к на отпуск"\nСоветник: спроси "почему перетратил?"',
     {
       reply_markup: new InlineKeyboard()
         .webApp('📱 Открыть Flux', MINIAPP_URL)
