@@ -150,12 +150,18 @@ export default function App(){
     finally{ setPhotoSending(false) }
   }
 
-   // динамика столбиков: сумма расходов за последние 7 дней -> высота (МСК)
+    // динамика столбиков — неделя Пн-Вс (МСК)
   const moscowDateStr = (offset=0)=> new Date(Date.now()+offset*86400000).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
   const toMoscowDate = (iso)=> new Date(iso).toLocaleDateString('en-CA',{timeZone:'Europe/Moscow'})
+  const moscowWeekday = ()=> new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Moscow'})).getDay() // 0 Вс
+  const mondayOffset = ()=> {
+    const wd = moscowWeekday();
+    return wd===0 ? -6 : 1 - wd; // сдвиг до понедельника
+  }
   const last7Expenses = React.useMemo(()=>{
+    const monOff = mondayOffset();
     return Array.from({length:7},(_,k)=>{
-      const offset = k-6 // -6 ... 0
+      const offset = monOff + k // Пн(0) .. Вс(6)
       const key = moscowDateStr(offset)
       return (data.transactions||[])
         .filter(t=> t.type==='expense' && toMoscowDate(t.created_at)===key)
@@ -179,9 +185,10 @@ export default function App(){
   const maxExpense = Math.max(...chartData, 1)
   const dayLabels = React.useMemo(()=>{
     if (chartMode==='month') return ['Нед1','Нед2','Нед3','Нед4','Нед5']
+    const monOff = mondayOffset();
     const fmt = new Intl.DateTimeFormat('ru-RU',{weekday:'short', timeZone:'Europe/Moscow'})
     return Array.from({length:7},(_,k)=>{
-      const d=new Date(); d.setDate(d.getDate()+(k-6))
+      const d=new Date(); d.setDate(d.getDate()+(monOff + k))
       return fmt.format(d)
     })
   },[chartMode])
