@@ -32,12 +32,13 @@ export default function App(){
   const [editingBudget, setEditingBudget] = useState(false)
   const [budgetInput, setBudgetInput] = useState('')
   const saveBudget = async ()=>{
-    const v = Number(String(budgetInput).replace(/\D/g,'')); if (!v) return
+    const v = Number(String(budgetInput).replace(/\D/g,'')); if (!v || v < 1000) { alert('Введите сумму от 1000₽'); return }
     try{
-      await fetch(`${API}/budget`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ budget: v }) }).then(r=>r.json())
-      setEditingBudget(false); setBudgetInput(''); refresh()
+      const res = await fetch(`${API}/budget`, { method:'POST', headers:{'content-type':'application/json','x-telegram-id': String(tgId)}, body: JSON.stringify({ budget: v, telegram_id: tgId }) }).then(r=>r.json())
+      if (res.error) throw new Error(res.error + (res.hint? ' — '+res.hint : ''))
+      setEditingBudget(false); setBudgetInput(''); await refresh()
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
-    }catch{}
+    }catch(e){ alert('Ошибка сохранения: '+e.message) }
   }
   const buyPlan = async (plan)=>{
     setPaying(plan)
@@ -271,10 +272,10 @@ export default function App(){
               <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-1"><div className={`h-1.5 rounded-full transition-all ${budgetPct>90?'bg-red-500':budgetPct>70?'bg-yellow-400':'bg-gradient-to-r from-[#8B5CF6] to-[#C084FC]'}`} style={{width:`${budgetPct}%`}} /></div>
             </div>
             {editingBudget && (
-              <div className="glass p-3 flex gap-2 items-center">
-                <input value={budgetInput} onChange={e=>setBudgetInput(e.target.value)} type="number" placeholder="20000" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-sm outline-none" autoFocus />
-                <button onClick={saveBudget} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold">ОК</button>
-                <button onClick={()=>setEditingBudget(false)} className="px-3 py-1.5 glass rounded-full text-sm">✕</button>
+              <div className="glass p-3 flex gap-2 items-center overflow-hidden">
+                <input value={budgetInput} onChange={e=>setBudgetInput(e.target.value)} type="number" placeholder="20000" className="flex-1 min-w-0 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-sm outline-none" autoFocus />
+                <button onClick={saveBudget} className="shrink-0 px-4 py-1.5 rounded-full btn-gradient text-sm font-bold">ОК</button>
+                <button onClick={()=>setEditingBudget(false)} className="shrink-0 w-8 h-8 flex items-center justify-center glass rounded-full text-sm">✕</button>
               </div>
             )}
             {/* пирог */}
@@ -318,10 +319,10 @@ export default function App(){
             <p className="text-[10px] opacity-40 mt-1">{budgetPct}% израсходовано • нажми чтобы задать свой лимит</p>
           </div>
           {editingBudget && (
-            <div className="glass p-3 flex gap-2">
-              <input value={budgetInput} onChange={e=>setBudgetInput(e.target.value)} type="number" placeholder="20000" className="flex-1 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-sm outline-none" autoFocus />
-              <button onClick={saveBudget} className="px-4 py-1.5 rounded-full btn-gradient text-sm font-bold">ОК</button>
-              <button onClick={()=>setEditingBudget(false)} className="px-3 py-1.5 glass rounded-full text-sm">✕</button>
+            <div className="glass p-3 flex gap-2 items-center overflow-hidden">
+              <input value={budgetInput} onChange={e=>setBudgetInput(e.target.value)} type="number" placeholder="20000" className="flex-1 min-w-0 bg-transparent border border-white/20 rounded-lg px-3 py-1.5 text-sm outline-none" autoFocus />
+              <button onClick={saveBudget} className="shrink-0 px-4 py-1.5 rounded-full btn-gradient text-sm font-bold">ОК</button>
+              <button onClick={()=>setEditingBudget(false)} className="shrink-0 w-8 h-8 flex items-center justify-center glass rounded-full text-sm">✕</button>
             </div>
           )}
           <div className="flex gap-1">

@@ -176,10 +176,21 @@ app.get('/budget', async (req,reply)=>{
   return { budget: user.monthly_budget || 20000 };
 });
 app.post('/budget', async (req,reply)=>{
-  const user = await getOrCreateUser(req.telegramId);
-  const b = Math.max(1000, Math.min(1000000, Number(req.body?.budget || req.body?.amount || 20000)));
-  await supabase.from('users').update({ monthly_budget: b }).eq('id', user.id);
-  return { budget: b };
+  try{
+    const user = await getOrCreateUser(req.telegramId);
+    const b = Math.max(1000, Math.min(1000000, Number(req.body?.budget || req.body?.amount || 20000)));
+    const { error } = await supabase.from('users').update({ monthly_budget: b }).eq('id', user.id);
+    if (error) {
+      if (error.message?.includes('monthly_budget')) {
+        return reply.code(500).send({ error: 'column monthly_budget missing', hint: 'Выполни в Supabase SQL Editor: alter table public.users add column if not exists monthly_budget int default 20000;' });
+      }
+      throw error;
+    }
+    return { budget: b };
+  }catch(e){
+    app.log.error(e);
+    return reply.code(500).send({ error: e.message });
+  }
 });
 
 app.get('/analytics', async (req) => {
