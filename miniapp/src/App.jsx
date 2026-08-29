@@ -117,13 +117,29 @@ export default function App(){
 
   // рефералка
   const [refStats, setRefStats] = useState(null)
-  useEffect(()=>{ fetch(`${API}/referral/stats?telegram_id=${tgId}`, {headers:{'x-telegram-id': String(tgId)}}).then(r=>r.json()).then(setRefStats).catch(()=>{}) },[])
+  const [copied, setCopied] = useState('')
+  useEffect(()=>{ fetch(`${API}/referral/stats?telegram_id=${tgId}`, {headers:{'x-telegram-id': String(tgId)}}).then(r=>r.json()).then(setRefStats).catch(()=>{}) },[tgId])
+  const getRefLink = ()=>{
+    let link = refStats?.link || ''
+    const code = refStats?.code || ''
+    if (!link || link.startsWith('ref:')) {
+      // fallback если BOT_USERNAME не задан на бэке
+      link = code ? `https://t.me/flux?start=${code}` : `https://t.me/flux`
+    }
+    return { link, code }
+  }
+  const copyText = async (text, label)=>{
+    try{ await navigator.clipboard.writeText(text); setCopied(label); setTimeout(()=>setCopied(''),1500); window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success') }catch{ prompt('Скопируй:', text) }
+  }
   const shareRef = ()=>{
-    const link = refStats?.link || `https://t.me/${(window.Telegram?.WebApp?.initDataUnsafe?.user?.username||'flux')}`
+    const { link, code } = getRefLink()
     const text = `FLUX — трекер всего. Перейди по моей ссылке и получи +7д Premium: ${link}`
-    if (navigator.share) navigator.share({title:'FLUX', text, url: link})
-    else if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`)
-    else window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}`, '_blank')
+    // сначала копируем ссылку для удобства
+    copyText(link, 'Ссылка скопирована')
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`
+    if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(shareUrl)
+    else if (navigator.share) navigator.share({title:'FLUX', text, url: link}).catch(()=> window.open(shareUrl, '_blank'))
+    else window.open(shareUrl, '_blank')
   }
 
   // советник
@@ -403,7 +419,7 @@ export default function App(){
           <div className="glass p-4 space-y-2">
             <p className="text-sm font-bold">🤖 ИИ-советник</p>
             <div className="flex gap-2 min-w-0">
-              <input value={advQ} onChange={e=>setAdvQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&askAdvisor()} placeholder="Почему я перетратил?" className="flex-1 min-w-0 bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm outline-none" />
+              <input value={advQ} onChange={e=>setAdvQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&askAdvisor()} placeholder="Почему я переплатил?" className="flex-1 min-w-0 bg-transparent border border-white/20 rounded-lg px-3 py-2 text-sm outline-none" />
               <button onClick={askAdvisor} disabled={advLoading} className="shrink-0 px-4 py-2 btn-gradient rounded-lg text-sm font-bold disabled:opacity-40">{advLoading?'...':'Спросить'}</button>
             </div>
             {advA && <div className="glass p-3 text-sm whitespace-pre-wrap">{advA}</div>}
@@ -574,8 +590,14 @@ export default function App(){
           <div className="glass p-4 space-y-2">
             <p className="text-sm font-bold">🎁 Рефералка — +7д каждому</p>
             <p className="text-xs opacity-60">Пригласи друга по ссылке, вы оба получите 7д Premium</p>
-            <div className="glass p-2 text-xs break-all">{refStats?.link || 'загрузка...'}</div>
-            <button onClick={shareRef} className="w-full btn-gradient py-2 rounded-xl text-sm font-bold">Поделиться ссылкой</button>
+            <div className="glass p-2 text-xs break-all select-all">{getRefLink().link || 'загрузка...'}</div>
+            <div className="text-[11px] opacity-60">Код: <span className="font-mono select-all">{getRefLink().code || '...'}</span> {copied && <span className="text-green-400 ml-2">{copied}</span>}</div>
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={()=>copyText(getRefLink().link, 'Ссылка скопирована')} className="glass py-2 rounded-xl text-xs font-semibold">📋 Ссылка</button>
+              <button onClick={()=>copyText(getRefLink().code, 'ID скопирован')} className="glass py-2 rounded-xl text-xs font-semibold">🆔 ID</button>
+              <button onClick={shareRef} className="btn-gradient py-2 rounded-xl text-xs font-bold">📤 Чат</button>
+            </div>
+            <p className="text-[10px] opacity-40 text-center">📤 — выбрать чат в Telegram, 📋/🆔 — просто скопировать</p>
             <p className="text-xs opacity-60 text-center">Приглашено: {refStats?.invited||0}</p>
           </div>
           <a
