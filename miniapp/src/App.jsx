@@ -517,7 +517,7 @@ export default function App(){
             </div>
           )}
           {voiceError && <p className="text-sm text-red-400">⚠️ {voiceError}</p>}
-          <p className="text-xs opacity-40">Бесплатно в браузере (Chrome/Safari) — без OpenRouter $0.50. Жми 🎙, говори, жми ⏹. Чат-бот остался как запасной.</p>
+          <p className="text-xs opacity-40"> Жми 🎙, говори, Стоп ⏹. Чат-бот остался как запасной.</p>
         </div>
       )}
 
